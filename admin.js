@@ -1,313 +1,332 @@
-const $ = s => document.querySelector(s);
-
-let pendingFiles = {
-  logo: '',
-  hero: ''
-};
-
-let catalog = null;
-
-document.addEventListener('DOMContentLoaded', async () => {
-  window.catalog = await window.loadCatalog();
-  catalog = window.catalog;
-  if (!guardAdminAccess()) return;
-  fillGeneral();
-  renderPromoEditor();
-  renderGeneralPromoEditor();
-  renderProductEditor();
-  bindAdmin();
-  updateStoreButtons();
-  renderSyncStatus();
-});
-
-function guardAdminAccess(){
-  const password = String(catalog.admin?.password || '').trim();
-  if (!password) return true;
-
-  const cached = sessionStorage.getItem(window.DIPSA_ADMIN_AUTH_KEY);
-  if (cached === password) return true;
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const entered = window.prompt('Ingresá la contraseña del panel admin:');
-    if (entered === null) {
-      window.location.href = 'index.html';
-      return false;
-    }
-    if (entered === password) {
-      sessionStorage.setItem(window.DIPSA_ADMIN_AUTH_KEY, password);
-      return true;
-    }
-    alert('Contraseña incorrecta.');
-  }
-
-  window.location.href = 'index.html';
-  return false;
-}
-
-function fillGeneral(){
-  $('#businessName').value = catalog.business.name || '';
-  $('#businessTagline').value = catalog.business.tagline || '';
-  $('#businessWhatsapp').value = catalog.business.whatsapp || '';
-  $('#businessPhoneDisplay').value = catalog.business.phoneDisplay || '';
-  $('#deliveryMessage').value = catalog.business.deliveryMessage || '';
-  $('#deliveryFee').value = catalog.business.deliveryFee || 0;
-  $('#logoUrl').value = catalog.business.logo || '';
-  $('#heroUrl').value = catalog.business.heroImage || '';
-  $('#adminPassword').value = catalog.admin?.password || '';
-  $('#supabaseUrl').value = catalog.supabase?.url || window.DIPSA_SUPABASE_CONFIG?.url || '';
-  $('#supabaseAnonKey').value = catalog.supabase?.anonKey || window.DIPSA_SUPABASE_CONFIG?.anonKey || '';
-}
-
-function bindAdmin(){
-  $('#storeOpenBtn').addEventListener('click', () => { catalog.business.storeOpen = true; updateStoreButtons(); });
-  $('#storeClosedBtn').addEventListener('click', () => { catalog.business.storeOpen = false; updateStoreButtons(); });
-  $('#saveAdmin').addEventListener('click', saveAll);
-  $('#testSupabaseBtn')?.addEventListener('click', testConnection);
-  $('#resetAdmin').addEventListener('click', async () => {
-    window.resetCatalog();
-    window.catalog = await window.loadCatalog();
-    catalog = window.catalog;
-    pendingFiles = { logo:'', hero:'' };
-    fillGeneral();
-    renderPromoEditor();
-    renderGeneralPromoEditor();
-    renderProductEditor();
-    updateStoreButtons();
-    renderSyncStatus();
-    alert('Se restauró la base local. Si querés subirla de nuevo, tocá Guardar cambios.');
-  });
-  $('#addDailyPromo').addEventListener('click', () => {
-    catalog.promosDaily.push(createEmptyPromo('daily', catalog.promosDaily.length + 1));
-    renderPromoEditor();
-  });
-  $('#addGeneralPromo').addEventListener('click', () => {
-    catalog.promosGeneral.push(createEmptyPromo('general', catalog.promosGeneral.length + 1));
-    renderGeneralPromoEditor();
-  });
-  $('#logoFile').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    pendingFiles.logo = await window.fileToDataUrl(file);
-    $('#logoUrl').value = pendingFiles.logo;
-  });
-  $('#heroFile').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    pendingFiles.hero = await window.fileToDataUrl(file);
-    $('#heroUrl').value = pendingFiles.hero;
-  });
-}
-
-function createEmptyPromo(type, count){
-  return {
-    id: `${type}-${Date.now()}-${count}`,
-    name: type === 'daily' ? `Promo del día ${count}` : `Promo general ${count}`,
-    desc: '',
-    normal: 0,
-    price: 0,
-    image: 'assets/pizza.jpg',
-    active: true
+(function(){
+  const $ = function(selector){ return document.querySelector(selector); };
+  const state = {
+    password: sessionStorage.getItem('dipsa_admin_password_v4') || '',
+    store: null
   };
-}
 
-function updateStoreButtons(){
-  $('#storeOpenBtn').classList.toggle('active', catalog.business.storeOpen !== false);
-  $('#storeClosedBtn').classList.toggle('active', catalog.business.storeOpen === false);
-}
+  document.addEventListener('DOMContentLoaded', init);
 
-function renderSyncStatus(){
-  const box = $('#syncStatus');
-  if (!box) return;
-  const ready = window.isSupabaseReady(catalog);
-  const info = window.getLastSyncInfo ? window.getLastSyncInfo() : null;
-  if (ready) {
-    if (info?.status === 'online') {
-      box.textContent = 'Supabase conectado. El catalogo ya puede quedar online.';
-    } else if (info?.status === 'offline') {
-      box.textContent = 'Supabase esta configurado, pero el ultimo guardado fallo. Revisa la URL, la clave o el SQL.';
+  function init(){
+    bindLogin();
+    bindTopActions();
+    if (state.password) {
+      tryLogin(state.password, true);
     } else {
-      box.textContent = 'Supabase configurado. Guarda cambios para subir el catalogo online.';
+      showLogin();
     }
-  } else {
-    box.textContent = 'Falta URL o clave publicable. Sin eso, el panel guarda solo en este navegador.';
   }
-}
 
-function renderPromoEditor(){
-  const wrap = $('#dailyPromoEditor');
-  wrap.innerHTML = '';
-  catalog.promosDaily.forEach((p, i) => {
-    const box = document.createElement('div');
-    box.className = 'admin-item cardish';
-    box.innerHTML = `
-      <div class="admin-row-head"><strong>${p.name}</strong><div class="admin-row-actions"><label class="switch-row"><input data-kind="promo-active" data-promo-type="daily" data-index="${i}" type="checkbox" ${p.active !== false ? 'checked' : ''}> Activa</label><button class="small-btn ghost tiny-btn" type="button" data-action="remove-promo" data-promo-type="daily" data-index="${i}">Eliminar</button></div></div>
-      <label>Título<input data-kind="promo-title" data-promo-type="daily" data-index="${i}" value="${escapeHtmlAttr(p.name)}"></label>
-      <label>Descripción<input data-kind="promo-desc" data-promo-type="daily" data-index="${i}" value="${escapeHtmlAttr(p.desc)}"></label>
-      <label>Precio normal<input data-kind="promo-normal" data-promo-type="daily" data-index="${i}" type="number" value="${p.normal}"></label>
-      <label>Precio promo<input data-kind="promo-price" data-promo-type="daily" data-index="${i}" type="number" value="${p.price}"></label>
-      <label>Imagen URL<input data-kind="promo-image" data-promo-type="daily" data-index="${i}" value="${escapeHtmlAttr(p.image)}"></label>
-      <label>Subir imagen<input data-kind="promo-file" data-promo-type="daily" data-index="${i}" type="file" accept="image/*"></label>
-    `;
-    wrap.appendChild(box);
-  });
-  bindPromoControls();
-}
-
-function renderGeneralPromoEditor(){
-  const wrap = $('#generalPromoEditor');
-  wrap.innerHTML = '';
-  catalog.promosGeneral.forEach((p, i) => {
-    const box = document.createElement('div');
-    box.className = 'admin-item cardish';
-    box.innerHTML = `
-      <div class="admin-row-head"><strong>${p.name}</strong><div class="admin-row-actions"><label class="switch-row"><input data-kind="promo-active" data-promo-type="general" data-index="${i}" type="checkbox" ${p.active !== false ? 'checked' : ''}> Activa</label><button class="small-btn ghost tiny-btn" type="button" data-action="remove-promo" data-promo-type="general" data-index="${i}">Eliminar</button></div></div>
-      <label>Título<input data-kind="promo-title" data-promo-type="general" data-index="${i}" value="${escapeHtmlAttr(p.name)}"></label>
-      <label>Descripción<input data-kind="promo-desc" data-promo-type="general" data-index="${i}" value="${escapeHtmlAttr(p.desc)}"></label>
-      <label>Precio normal<input data-kind="promo-normal" data-promo-type="general" data-index="${i}" type="number" value="${p.normal || 0}"></label>
-      <label>Precio promo<input data-kind="promo-price" data-promo-type="general" data-index="${i}" type="number" value="${p.price}"></label>
-      <label>Imagen URL<input data-kind="promo-image" data-promo-type="general" data-index="${i}" value="${escapeHtmlAttr(p.image || '')}"></label>
-      <label>Subir imagen<input data-kind="promo-file" data-promo-type="general" data-index="${i}" type="file" accept="image/*"></label>
-    `;
-    wrap.appendChild(box);
-  });
-  bindPromoControls();
-}
-
-function bindPromoControls(){
-  document.querySelectorAll('[data-kind="promo-file"]').forEach(input => {
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const value = await window.fileToDataUrl(file);
-      const type = input.dataset.promoType;
-      const index = Number(input.dataset.index);
-      document.querySelector(`[data-kind="promo-image"][data-promo-type="${type}"][data-index="${index}"]`).value = value;
-    };
-  });
-  document.querySelectorAll('[data-action="remove-promo"]').forEach(btn => {
-    btn.onclick = () => {
-      const type = btn.dataset.promoType;
-      const index = Number(btn.dataset.index);
-      const list = type === 'daily' ? catalog.promosDaily : catalog.promosGeneral;
-      list.splice(index, 1);
-      if (type === 'daily') renderPromoEditor(); else renderGeneralPromoEditor();
-    };
-  });
-}
-
-function renderProductEditor(){
-  const wrap = $('#productEditor');
-  wrap.innerHTML = '';
-  Object.entries(catalog.products).forEach(([cat, items]) => {
-    const title = document.createElement('div');
-    title.className = 'admin-item section-label';
-    title.innerHTML = `<strong>${cat}</strong>`;
-    wrap.appendChild(title);
-
-    items.forEach((item, idx) => {
-      const row = document.createElement('div');
-      row.className = 'admin-item cardish';
-      row.innerHTML = `
-        <div class="admin-row-head"><strong>${item.name}</strong></div>
-        <label>Precio<input data-kind="product-price" data-category="${cat}" data-index="${idx}" type="number" value="${Number(item.price || 0)}"></label>
-        <label>Detalle<input data-kind="product-detail" data-category="${cat}" data-index="${idx}" value="${escapeHtmlAttr(item.detail || '')}"></label>
-        <div class="toggle-grid">
-          <label class="switch-row"><input data-kind="product-active" data-category="${cat}" data-index="${idx}" type="checkbox" ${item.active !== false ? 'checked' : ''}> Visible</label>
-          <label class="switch-row"><input data-kind="product-stock" data-category="${cat}" data-index="${idx}" type="checkbox" ${item.inStock !== false ? 'checked' : ''}> En stock</label>
-        </div>
-      `;
-      wrap.appendChild(row);
+  function bindLogin(){
+    $('#loginForm').addEventListener('submit', function(event){
+      event.preventDefault();
+      const password = $('#loginPassword').value.trim();
+      tryLogin(password, false);
     });
-  });
-}
-
-async function saveAll(){
-  catalog.business.name = $('#businessName').value.trim();
-  catalog.business.tagline = $('#businessTagline').value.trim();
-  catalog.business.whatsapp = $('#businessWhatsapp').value.trim();
-  catalog.business.phoneDisplay = $('#businessPhoneDisplay').value.trim();
-  catalog.business.deliveryMessage = $('#deliveryMessage').value.trim();
-  catalog.business.deliveryFee = Number($('#deliveryFee').value || 0);
-  catalog.business.logo = $('#logoUrl').value.trim() || 'assets/logo.jpg';
-  catalog.business.heroImage = $('#heroUrl').value.trim() || 'assets/hero.jpg';
-  catalog.admin = catalog.admin || {};
-  catalog.admin.password = $('#adminPassword').value.trim();
-  catalog.supabase = catalog.supabase || {};
-  catalog.supabase.url = $('#supabaseUrl').value.trim();
-  catalog.supabase.anonKey = $('#supabaseAnonKey').value.trim();
-  catalog.supabase.enabled = true;
-
-  applyPromoValues('daily', catalog.promosDaily);
-  applyPromoValues('general', catalog.promosGeneral);
-
-  document.querySelectorAll('[data-kind="product-price"]').forEach(input => {
-    const cat = input.dataset.category;
-    const idx = Number(input.dataset.index);
-    catalog.products[cat][idx].price = Number(input.value || 0);
-  });
-  document.querySelectorAll('[data-kind="product-detail"]').forEach(input => {
-    const cat = input.dataset.category;
-    const idx = Number(input.dataset.index);
-    catalog.products[cat][idx].detail = input.value.trim();
-  });
-  document.querySelectorAll('[data-kind="product-active"]').forEach(input => {
-    const cat = input.dataset.category;
-    const idx = Number(input.dataset.index);
-    catalog.products[cat][idx].active = input.checked;
-  });
-  document.querySelectorAll('[data-kind="product-stock"]').forEach(input => {
-    const cat = input.dataset.category;
-    const idx = Number(input.dataset.index);
-    catalog.products[cat][idx].inStock = input.checked;
-  });
-
-  const result = await window.saveCatalog(catalog);
-  renderSyncStatus();
-
-  if (result.ok && result.mode === 'supabase') {
-    alert('Cambios guardados en Supabase. Se van a ver en todos los dispositivos.');
-  } else if (result.ok) {
-    alert('Cambios guardados solo en este navegador. Pegá la clave publicable para que quede online.');
-  } else {
-    alert('Se guardó copia local, pero falló la sincronización con Supabase. Revisá URL, clave publicable y políticas.');
   }
-}
 
-function applyPromoValues(type, list){
-  document.querySelectorAll(`[data-kind="promo-title"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].name = input.value.trim();
-  });
-  document.querySelectorAll(`[data-kind="promo-desc"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].desc = input.value.trim();
-  });
-  document.querySelectorAll(`[data-kind="promo-normal"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].normal = Number(input.value || 0);
-  });
-  document.querySelectorAll(`[data-kind="promo-price"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].price = Number(input.value || 0);
-  });
-  document.querySelectorAll(`[data-kind="promo-image"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].image = input.value.trim() || 'assets/pizza.jpg';
-  });
-  document.querySelectorAll(`[data-kind="promo-active"][data-promo-type="${type}"]`).forEach(input => {
-    list[Number(input.dataset.index)].active = input.checked;
-  });
-}
+  function bindTopActions(){
+    $('#logoutAdmin').addEventListener('click', function(){
+      state.password = '';
+      sessionStorage.removeItem('dipsa_admin_password_v4');
+      showLogin();
+    });
+    $('#saveAdmin').addEventListener('click', saveAll);
+    $('#reloadAdmin').addEventListener('click', async function(){
+      await loadStore();
+      alert('Panel recargado con los datos guardados en Supabase.');
+    });
+    $('#addDailyPromo').addEventListener('click', function(){
+      state.store.promotionsDaily.push(window.DIPSA.createEmptyPromotion('daily'));
+      renderPromotions();
+    });
+    $('#addGeneralPromo').addEventListener('click', function(){
+      state.store.promotionsGeneral.push(window.DIPSA.createEmptyPromotion('general'));
+      renderPromotions();
+    });
+  }
 
-function escapeHtmlAttr(value){
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+  async function tryLogin(password, silent){
+    if (!password) {
+      if (!silent) showLogin('Ingresá la contraseña del panel.');
+      return;
+    }
+    setLoginStatus('Validando acceso...');
+    try {
+      const response = await window.DIPSA.adminLogin(password);
+      if (!response || response.ok !== true) {
+        throw new Error('Contraseña incorrecta.');
+      }
+      state.password = password;
+      sessionStorage.setItem('dipsa_admin_password_v4', password);
+      await loadStore();
+      hideLogin();
+    } catch (error) {
+      console.error(error);
+      state.password = '';
+      sessionStorage.removeItem('dipsa_admin_password_v4');
+      showLogin(error.message || 'No se pudo ingresar al panel.');
+    }
+  }
 
-async function testConnection(){
-  catalog.supabase = catalog.supabase || {};
-  catalog.supabase.url = $('#supabaseUrl').value.trim();
-  catalog.supabase.anonKey = $('#supabaseAnonKey').value.trim();
-  catalog.supabase.enabled = true;
-  const result = await window.testSupabaseConnection(catalog);
-  renderSyncStatus();
-  alert(result.ok ? 'Conexion correcta con Supabase.' : `No se pudo conectar con Supabase.\n\n${result.message}`);
-}
+  function showLogin(message){
+    $('#loginScreen').classList.remove('hidden-block');
+    $('#adminShell').classList.add('hidden-block');
+    $('#loginPassword').value = '';
+    setLoginStatus(message || window.DIPSA.config.adminPasswordHint || 'Ingresá la clave del panel.');
+  }
+
+  function hideLogin(){
+    $('#loginScreen').classList.add('hidden-block');
+    $('#adminShell').classList.remove('hidden-block');
+    setLoginStatus('');
+  }
+
+  function setLoginStatus(message){
+    $('#loginStatus').textContent = message || '';
+  }
+
+  async function loadStore(){
+    state.store = await window.DIPSA.getStorefrontData();
+    fillGeneral();
+    renderPromotions();
+    renderProducts();
+  }
+
+  function fillGeneral(){
+    const business = state.store.business;
+    $('#businessName').value = business.name || '';
+    $('#businessTagline').value = business.tagline || '';
+    $('#businessWhatsapp').value = business.whatsapp || '';
+    $('#businessPhoneDisplay').value = business.phoneDisplay || '';
+    $('#deliveryMessage').value = business.deliveryMessage || '';
+    $('#deliveryFee').value = Number(business.deliveryFee || 0);
+    $('#logoUrl').value = business.logo || '';
+    $('#heroUrl').value = business.heroImage || '';
+    $('#promoHeadlineInput').value = business.promoHeadline || '';
+    $('#birthdayText').value = business.birthdayBannerText || '';
+    $('#birthdayDiscountPercent').value = Number(business.birthdayDiscountPercent || 20);
+    $('#storeOpenBtn').classList.toggle('active', business.storeOpen !== false);
+    $('#storeClosedBtn').classList.toggle('active', business.storeOpen === false);
+
+    $('#storeOpenBtn').onclick = function(){ state.store.business.storeOpen = true; fillGeneral(); };
+    $('#storeClosedBtn').onclick = function(){ state.store.business.storeOpen = false; fillGeneral(); };
+
+    bindImageUploader('#logoFile', '#logoUrl');
+    bindImageUploader('#heroFile', '#heroUrl');
+  }
+
+  function bindImageUploader(fileSelector, targetSelector){
+    const input = $(fileSelector);
+    input.onchange = async function(event){
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      const dataUrl = await window.DIPSA.fileToDataUrl(file);
+      $(targetSelector).value = dataUrl;
+    };
+  }
+
+  function renderPromotions(){
+    renderPromotionList('#dailyPromoEditor', state.store.promotionsDaily, 'daily');
+    renderPromotionList('#generalPromoEditor', state.store.promotionsGeneral, 'general');
+  }
+
+  function renderPromotionList(selector, list, type){
+    const wrap = $(selector);
+    wrap.innerHTML = '';
+    list.sort(function(a, b){ return Number(a.sort_order || 0) - Number(b.sort_order || 0); });
+    list.forEach(function(promo, index){
+      const box = document.createElement('div');
+      box.className = 'admin-item cardish';
+      box.innerHTML = [
+        '<div class="admin-row-head"><strong>' + escapeHtml(promo.name || 'Promo sin título') + '</strong><div class="admin-row-actions"><label class="switch-row"><input type="checkbox" data-type="promo-active" data-promo-type="' + type + '" data-index="' + index + '" ' + (promo.active !== false ? 'checked' : '') + '> Activa</label><button class="small-btn ghost tiny-btn" type="button" data-action="remove-promo" data-promo-type="' + type + '" data-index="' + index + '">Eliminar</button></div></div>',
+        '<label>Título<input data-type="promo-name" data-promo-type="' + type + '" data-index="' + index + '" value="' + escapeAttribute(promo.name || '') + '"></label>',
+        '<label>Descripción<textarea data-type="promo-description" data-promo-type="' + type + '" data-index="' + index + '" rows="2">' + escapeHtml(promo.description || '') + '</textarea></label>',
+        '<div class="form-grid"><label>Precio normal<input type="number" data-type="promo-normal" data-promo-type="' + type + '" data-index="' + index + '" value="' + Number(promo.normal_price || 0) + '"></label><label>Precio promo<input type="number" data-type="promo-price" data-promo-type="' + type + '" data-index="' + index + '" value="' + Number(promo.promo_price || 0) + '"></label><label>Orden<input type="number" data-type="promo-order" data-promo-type="' + type + '" data-index="' + index + '" value="' + Number(promo.sort_order || 0) + '"></label></div>',
+        '<label>Imagen URL o dataURL<input data-type="promo-image" data-promo-type="' + type + '" data-index="' + index + '" value="' + escapeAttribute(promo.image_url || '') + '"></label>',
+        '<label>Subir imagen<input type="file" accept="image/*" data-type="promo-file" data-promo-type="' + type + '" data-index="' + index + '"></label>'
+      ].join('');
+      wrap.appendChild(box);
+    });
+
+    wrap.querySelectorAll('[data-action="remove-promo"]').forEach(function(button){
+      button.addEventListener('click', function(){
+        const index = Number(button.dataset.index);
+        const targetList = button.dataset.promoType === 'daily' ? state.store.promotionsDaily : state.store.promotionsGeneral;
+        targetList.splice(index, 1);
+        renderPromotions();
+      });
+    });
+
+    wrap.querySelectorAll('[data-type="promo-file"]').forEach(function(input){
+      input.addEventListener('change', async function(event){
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        const dataUrl = await window.DIPSA.fileToDataUrl(file);
+        const index = Number(input.dataset.index);
+        const targetList = input.dataset.promoType === 'daily' ? state.store.promotionsDaily : state.store.promotionsGeneral;
+        targetList[index].image_url = dataUrl;
+        renderPromotions();
+      });
+    });
+  }
+
+  function renderProducts(){
+    const wrap = $('#productEditor');
+    wrap.innerHTML = '';
+    state.store.categories.forEach(function(category){
+      const section = document.createElement('section');
+      section.className = 'admin-group';
+      section.innerHTML = '<div class="admin-section-head"><h3 class="admin-subtitle">' + escapeHtml(category) + '</h3><button class="small-btn" type="button" data-action="add-product" data-category="' + escapeAttribute(category) + '">Agregar producto</button></div><div class="admin-list" data-product-list="' + escapeAttribute(category) + '"></div>';
+      wrap.appendChild(section);
+      const listWrap = section.querySelector('[data-product-list="' + category + '"]');
+      const items = (state.store.products[category] || []).slice().sort(function(a, b){ return Number(a.sort_order || 0) - Number(b.sort_order || 0); });
+      items.forEach(function(item){
+        const box = document.createElement('div');
+        box.className = 'admin-item cardish';
+        box.dataset.productId = item.id;
+        box.innerHTML = [
+          '<div class="admin-row-head"><strong>' + escapeHtml(item.name || 'Producto nuevo') + '</strong><div class="admin-row-actions"><label class="switch-row"><input type="checkbox" data-field="active" ' + (item.active !== false ? 'checked' : '') + '> Visible</label><label class="switch-row"><input type="checkbox" data-field="in_stock" ' + (item.in_stock !== false ? 'checked' : '') + '> En stock</label><button class="small-btn ghost tiny-btn" type="button" data-action="remove-product">Eliminar</button></div></div>',
+          '<div class="form-grid"><label>Nombre<input data-field="name" value="' + escapeAttribute(item.name || '') + '"></label><label>Precio<input type="number" data-field="price" value="' + Number(item.price || 0) + '"></label><label>Orden<input type="number" data-field="sort_order" value="' + Number(item.sort_order || 0) + '"></label></div>',
+          '<label>Detalle<textarea rows="2" data-field="detail">' + escapeHtml(item.detail || '') + '</textarea></label>',
+          '<div class="form-grid"><label>Imagen URL o dataURL<input data-field="image_url" value="' + escapeAttribute(item.image_url || '') + '"></label><label>Opciones separadas por coma<input data-field="options" value="' + escapeAttribute((item.options || []).join(', ')) + '"></label><label class="switch-row" style="margin-top:30px"><input type="checkbox" data-field="allow_half" ' + (item.allow_half === true ? 'checked' : '') + '> Permitir 1/2</label></div>',
+          '<label>Subir imagen<input type="file" accept="image/*" data-action="upload-product-image"></label>'
+        ].join('');
+        listWrap.appendChild(box);
+      });
+    });
+
+    wrap.querySelectorAll('[data-action="add-product"]').forEach(function(button){
+      button.addEventListener('click', function(){
+        const category = button.dataset.category;
+        state.store.products[category].push(window.DIPSA.createEmptyProduct(category));
+        renderProducts();
+      });
+    });
+
+    wrap.querySelectorAll('[data-action="remove-product"]').forEach(function(button){
+      button.addEventListener('click', function(){
+        const card = button.closest('[data-product-id]');
+        const id = card.dataset.productId;
+        Object.keys(state.store.products).forEach(function(category){
+          state.store.products[category] = state.store.products[category].filter(function(item){ return item.id !== id; });
+        });
+        renderProducts();
+      });
+    });
+
+    wrap.querySelectorAll('[data-action="upload-product-image"]').forEach(function(input){
+      input.addEventListener('change', async function(event){
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+        const card = input.closest('[data-product-id]');
+        const dataUrl = await window.DIPSA.fileToDataUrl(file);
+        card.querySelector('[data-field="image_url"]').value = dataUrl;
+      });
+    });
+  }
+
+  function collectBusiness(){
+    state.store.business = Object.assign({}, state.store.business, {
+      name: $('#businessName').value.trim(),
+      tagline: $('#businessTagline').value.trim(),
+      whatsapp: $('#businessWhatsapp').value.trim(),
+      phoneDisplay: $('#businessPhoneDisplay').value.trim(),
+      deliveryMessage: $('#deliveryMessage').value.trim(),
+      deliveryFee: Number($('#deliveryFee').value || 0),
+      logo: $('#logoUrl').value.trim(),
+      heroImage: $('#heroUrl').value.trim(),
+      promoHeadline: $('#promoHeadlineInput').value.trim(),
+      birthdayBannerText: $('#birthdayText').value.trim(),
+      birthdayDiscountPercent: Number($('#birthdayDiscountPercent').value || 20),
+      storeOpen: state.store.business.storeOpen !== false
+    });
+    return state.store.business;
+  }
+
+  function collectPromotions(){
+    collectPromotionList(state.store.promotionsDaily, 'daily');
+    collectPromotionList(state.store.promotionsGeneral, 'general');
+    return state.store.promotionsDaily.concat(state.store.promotionsGeneral);
+  }
+
+  function collectPromotionList(list, type){
+    document.querySelectorAll('[data-promo-type="' + type + '"]').forEach(function(field){
+      const index = Number(field.dataset.index);
+      const target = list[index];
+      if (!target) return;
+      const role = field.dataset.type;
+      if (role === 'promo-name') target.name = field.value.trim();
+      if (role === 'promo-description') target.description = field.value.trim();
+      if (role === 'promo-normal') target.normal_price = Number(field.value || 0);
+      if (role === 'promo-price') target.promo_price = Number(field.value || 0);
+      if (role === 'promo-order') target.sort_order = Number(field.value || 0);
+      if (role === 'promo-image') target.image_url = field.value.trim();
+      if (role === 'promo-active') target.active = field.checked;
+    });
+  }
+
+  function collectProducts(){
+    const products = [];
+    document.querySelectorAll('[data-product-id]').forEach(function(card){
+      const category = card.closest('.admin-group').querySelector('[data-action="add-product"]').dataset.category;
+      const product = {
+        id: card.dataset.productId,
+        category: category,
+        name: card.querySelector('[data-field="name"]').value.trim(),
+        price: Number(card.querySelector('[data-field="price"]').value || 0),
+        sort_order: Number(card.querySelector('[data-field="sort_order"]').value || 0),
+        detail: card.querySelector('[data-field="detail"]').value.trim(),
+        image_url: card.querySelector('[data-field="image_url"]').value.trim() || window.DIPSA.getCategoryImage(category),
+        options: card.querySelector('[data-field="options"]').value.split(',').map(function(value){ return value.trim(); }).filter(Boolean),
+        active: card.querySelector('[data-field="active"]').checked,
+        in_stock: card.querySelector('[data-field="in_stock"]').checked,
+        allow_half: card.querySelector('[data-field="allow_half"]').checked
+      };
+      if (product.name) products.push(product);
+    });
+    return products;
+  }
+
+  async function saveAll(){
+    const saveButton = $('#saveAdmin');
+    saveButton.disabled = true;
+    saveButton.textContent = 'Guardando...';
+    try {
+      const payload = {
+        business: collectBusiness(),
+        products: collectProducts(),
+        promotions: collectPromotions(),
+        new_password: $('#newAdminPassword').value.trim() || null
+      };
+      const result = await window.DIPSA.adminSaveAll(state.password, payload);
+      if (!result || result.ok !== true) throw new Error('No se pudieron guardar los cambios.');
+      if (payload.new_password) {
+        state.password = payload.new_password;
+        sessionStorage.setItem('dipsa_admin_password_v4', state.password);
+        $('#newAdminPassword').value = '';
+      }
+      await loadStore();
+      alert('Todo quedó guardado en Supabase.');
+    } catch (error) {
+      console.error(error);
+      alert(error.message || 'Error al guardar.');
+    } finally {
+      saveButton.disabled = false;
+      saveButton.textContent = 'Guardar cambios';
+    }
+  }
+
+  function escapeHtml(value){
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function escapeAttribute(value){
+    return escapeHtml(value);
+  }
+})();

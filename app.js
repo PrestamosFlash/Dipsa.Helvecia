@@ -1,920 +1,642 @@
-let installPrompt = null;
-let carouselInterval = null;
-let customerRecord = null;
-let customerLookupToken = 0;
-const STORAGE_KEY = 'dipsa_storefront_state_v4';
-const DEFAULT_CUSTOMER = {
-  name:'',
-  phone:'',
-  address:'',
-  zone:'',
-  payment:'',
-  notes:'',
-  birthdate:''
-};
-let state = {
-  screen:'home',
-  cart:[],
-  delivery:true,
-  birthday:false,
-  promoTab:'daily',
-  menuFilter:'all',
-  customer:{ ...DEFAULT_CUSTOMER }
-};
-const $ = s => document.querySelector(s);
-const MENU_ORDER = ['Pizzas','Panchos','Empanadas','Milanesas','Hamburguesas','Papas','Bebidas','Cervezas'];
-const HOME_CATEGORIES = [
-  { label:'Pizzas', key:'Pizzas' },
-  { label:'Panchos', key:'Panchos' },
-  { label:'Empanadas', key:'Empanadas' },
-  { label:'Milanesas', key:'Milanesas' },
-  { label:'Hamburguesas', key:'Hamburguesas' },
-  { label:'Bebidas', key:'Bebidas' },
-  { label:'Papas', key:'Papas' }
-];
+(function(){
+  const $ = function(selector){ return document.querySelector(selector); };
+  const DEFAULT_CUSTOMER = {
+    name: '',
+    phone: '',
+    address: '',
+    zone: '',
+    payment: '',
+    notes: '',
+    birthdate: ''
+  };
 
-window.addEventListener('storage', async () => {
-  window.catalog = await window.loadCatalog();
-  restoreState();
-  renderAll();
-  renderCart();
-  syncFormFromState();
-  await hydrateCustomerFromPhone(state.customer.phone, { silent:true });
-});
+  const state = {
+    screen: 'home',
+    store: null,
+    cart: window.DIPSA.loadLocalCart(),
+    delivery: true,
+    promoTab: 'daily',
+    menuFilter: 'all',
+    customer: Object.assign({}, DEFAULT_CUSTOMER, window.DIPSA.loadLocalProfile()),
+    birthdayActive: false,
+    lookupTimer: null,
+    carouselTimer: null,
+    carouselIndex: 0
+  };
 
-document.addEventListener('DOMContentLoaded', async () => {
-  window.catalog = await window.loadCatalog();
-  restoreState();
-  bindEvents();
-  renderAll();
-  renderCart();
-  syncFormFromState();
-  await hydrateCustomerFromPhone(state.customer.phone, { silent:true });
-  registerSW();
-  startPromoCarousel();
-  initHistory();
-});
+  document.addEventListener('DOMContentLoaded', init);
 
+  async function init(){
+    bindNavigation();
+    bindCheckout();
+    bindStaticActions();
+    await refreshStorefront();
+    startPromoCarousel();
+    syncForm();
+    hydrateKnownCustomer();
+    renderCart();
+    switchScreen('home');
+    window.addEventListener('focus', refreshStorefront);
+    setInterval(function(){
+      if (document.visibilityState === 'visible') refreshStorefront();
+    }, 60000);
+  }
 
+  async function refreshStorefront(){
+    state.store = await window.DIPSA.getStorefrontData();
+    renderBrand();
+    renderHome();
+    renderPromos();
+    renderMenu();
+    renderBirthdayBanner();
+  }
 
-function bindEvents(){
-  document.querySelectorAll('[data-screen]').forEach(btn => btn.addEventListener('click', () => {
-    if (btn.dataset.screen === 'menu') state.menuFilter = 'all';
-    switchScreen(btn.dataset.screen, { pushHistory:true });
-  }));
-
-  $('#deliveryToggle').addEventListener('click', () => { state.delivery = true; updateToggles(); renderCart(); persistState(); });
-  $('#pickupToggle').addEventListener('click', () => { state.delivery = false; updateToggles(); renderCart(); persistState(); });
-  $('#sendWhatsApp').addEventListener('click', sendWhatsApp);
-  $('#dismissInstall').addEventListener('click', () => $('#installBanner').classList.add('hidden'));
-  $('#installBtn').addEventListener('click', async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    await installPrompt.userChoice;
-    installPrompt = null;
-    $('#installBanner').classList.add('hidden');
-  });
-  window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault();
-    installPrompt = e;
-    $('#installBanner').classList.remove('hidden');
-  });
-
-  const heroMenuBtn = $('#heroMenuBtn');
-  if (heroMenuBtn) {
-    heroMenuBtn.addEventListener('click', () => {
-      state.menuFilter = 'all';
-      switchScreen('menu', { pushHistory:true });
+  function bindNavigation(){
+    document.querySelectorAll('[data-screen]').forEach(function(button){
+      button.addEventListener('click', function(){
+        const screen = button.dataset.screen;
+        if (screen === 'menu') state.menuFilter = 'all';
+        switchScreen(screen);
+      });
     });
-  }
-  const heroWhatsAppBtn = $('#heroWhatsAppBtn');
-  if (heroWhatsAppBtn) heroWhatsAppBtn.addEventListener('click', openBusinessWhatsApp);
-  const deliveryBadgeBtn = $('#deliveryBadgeBtn');
-  if (deliveryBadgeBtn) deliveryBadgeBtn.addEventListener('click', openBusinessWhatsApp);
-  $('#promoChipDaily').addEventListener('click', () => setPromoTab('daily'));
-  $('#promoChipGeneral').addEventListener('click', () => setPromoTab('general'));
 
-  bindCustomerField('#customerName', 'name');
-  bindCustomerField('#customerPhone', 'phone');
-  bindCustomerField('#customerAddress', 'address');
-  bindCustomerField('#customerZone', 'zone');
-  bindCustomerField('#customerPayment', 'payment');
-  bindCustomerField('#customerNotes', 'notes');
-  bindCustomerField('#customerBirthdate', 'birthdate');
-
-  const phoneField = $('#customerPhone');
-  if (phoneField) {
-    phoneField.addEventListener('blur', () => hydrateCustomerFromPhone(phoneField.value));
-    phoneField.addEventListener('change', () => hydrateCustomerFromPhone(phoneField.value));
+    const promoDaily = $('#promoChipDaily');
+    const promoGeneral = $('#promoChipGeneral');
+    if (promoDaily) promoDaily.addEventListener('click', function(){ setPromoTab('daily'); });
+    if (promoGeneral) promoGeneral.addEventListener('click', function(){ setPromoTab('general'); });
   }
-  const birthField = $('#customerBirthdate');
-  if (birthField) {
-    birthField.addEventListener('change', () => {
+
+  function bindStaticActions(){
+    $('#deliveryToggle').addEventListener('click', function(){ state.delivery = true; updateDeliveryToggle(); renderCart(); });
+    $('#pickupToggle').addEventListener('click', function(){ state.delivery = false; updateDeliveryToggle(); renderCart(); });
+    $('#sendWhatsApp').addEventListener('click', submitOrder);
+    $('#heroMenuBtn').addEventListener('click', function(){ state.menuFilter = 'all'; switchScreen('menu'); });
+    $('#heroWhatsAppBtn').addEventListener('click', function(){ openBusinessWhatsApp(); });
+    $('#birthdayRegisterBtn').addEventListener('click', function(){ switchScreen('cart'); $('#customerPhone').focus(); });
+  }
+
+  function bindCheckout(){
+    bindField('#customerName', 'name');
+    bindField('#customerPhone', 'phone', function(){
+      scheduleCustomerLookup($('#customerPhone').value);
+    });
+    bindField('#customerAddress', 'address');
+    bindField('#customerZone', 'zone');
+    bindField('#customerPayment', 'payment');
+    bindField('#customerNotes', 'notes');
+    bindField('#customerBirthdate', 'birthdate', function(){
+      refreshBirthdayState();
+      renderBirthdayBanner();
       renderCart();
-      renderBirthdayGreeting();
-      persistState();
     });
   }
 
-  updateToggles();
-  setPromoTab(state.promoTab);
-}
-
-function bindCustomerField(selector, key){
-  const field = $(selector);
-  if (!field) return;
-  field.addEventListener('input', () => {
-    state.customer[key] = field.value;
-    if (key === 'birthdate') {
-      renderCart();
-      renderBirthdayGreeting();
-    }
-    persistState();
-  });
-  field.addEventListener('change', () => {
-    state.customer[key] = field.value;
-    if (key === 'birthdate') {
-      renderCart();
-      renderBirthdayGreeting();
-    }
-    persistState();
-  });
-}
-
-function restoreState(){
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    state = {
-      ...state,
-      ...saved,
-      customer: { ...DEFAULT_CUSTOMER, ...(saved.customer || {}) },
-      cart: Array.isArray(saved.cart) ? saved.cart : []
-    };
-  } catch (err) {
-    console.warn('No se pudo restaurar el estado guardado', err);
+  function bindField(selector, key, extra){
+    const field = $(selector);
+    field.addEventListener('input', function(){
+      state.customer[key] = field.value;
+      persistCustomer();
+      if (typeof extra === 'function') extra();
+    });
+    field.addEventListener('change', function(){
+      state.customer[key] = field.value;
+      persistCustomer();
+      if (typeof extra === 'function') extra();
+    });
   }
-}
 
-function persistState(){
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      screen: state.screen,
-      cart: state.cart,
-      delivery: state.delivery,
-      birthday: state.birthday,
-      promoTab: state.promoTab,
-      menuFilter: state.menuFilter,
-      customer: state.customer
-    }));
-  } catch (err) {
-    console.warn('No se pudo guardar el estado', err);
+  function scheduleCustomerLookup(phone){
+    clearTimeout(state.lookupTimer);
+    const cleanPhone = window.DIPSA.normalizePhone(phone);
+    if (!cleanPhone || cleanPhone.length < 8) return;
+    state.lookupTimer = setTimeout(async function(){
+      try {
+        const profile = await window.DIPSA.getCustomerProfile(cleanPhone);
+        if (!profile) return;
+        mergeCustomer(profile);
+        syncForm();
+        refreshBirthdayState();
+        renderBirthdayBanner();
+        renderCart();
+      } catch (error) {
+        console.warn('No se pudo buscar el cliente:', error.message);
+      }
+    }, 500);
   }
-}
 
-function syncFormFromState(){
-  $('#customerName').value = state.customer.name || '';
-  $('#customerPhone').value = state.customer.phone || '';
-  $('#customerAddress').value = state.customer.address || '';
-  $('#customerZone').value = state.customer.zone || '';
-  $('#customerPayment').value = state.customer.payment || '';
-  $('#customerNotes').value = state.customer.notes || '';
-  const birth = $('#customerBirthdate');
-  if (birth) birth.value = state.customer.birthdate || '';
-  applyBirthdateFieldState();
-  state.birthday = isBirthdayToday(getEffectiveBirthdate());
-  renderBirthdayGreeting();
-}
-
-function initHistory(){
-  const initial = { screen: state.screen, menuFilter: state.menuFilter };
-  window.history.replaceState(initial, '', `#${state.screen}`);
-  window.addEventListener('popstate', (event) => {
-    const target = event.state?.screen || 'home';
-    if (event.state?.menuFilter) state.menuFilter = event.state.menuFilter;
-    switchScreen(target, { pushHistory:false });
-  });
-}
-
-function renderAll(){
-  updateBrand();
-  updateStoreStatus();
-  renderHome();
-  renderPromos();
-  renderMenu();
-}
-
-async function registerSW(){
-  await window.disableOldServiceWorkers();
-}
-
-function updateBrand(){
-  $('#brandName').textContent = (catalog.business.name || 'Dipsa').toUpperCase();
-  $('#brandTagline').textContent = catalog.business.tagline || '';
-  $('#brandLogo').src = catalog.business.logo || 'assets/logo.jpg';
-  $('#heroImage').src = catalog.business.heroImage || 'assets/hero.jpg';
-  $('#deliveryPhone').textContent = catalog.business.phoneDisplay || catalog.business.whatsapp || '';
-  $('#deliveryText').textContent = catalog.business.deliveryMessage || 'Pedidos por WhatsApp';
-}
-
-function updateStoreStatus(){
-  $('#storeStatus').textContent = catalog.business.storeOpen === false ? 'Cerrado' : 'Abierto ahora';
-}
-
-function setCheckoutStatus(message, kind = 'info'){
-  const box = $('#checkoutStatus');
-  if (!box) return;
-  if (!message) {
-    box.textContent = '';
-    box.classList.add('hidden-block');
-    return;
-  }
-  box.textContent = message;
-  box.dataset.kind = kind;
-  box.classList.remove('hidden-block');
-}
-
-function setCustomerLookupMessage(message){
-  const box = $('#customerLookupMessage');
-  if (!box) return;
-  if (!message) {
-    box.textContent = '';
-    box.classList.add('hidden-block');
-    return;
-  }
-  box.textContent = message;
-  box.classList.remove('hidden-block');
-}
-
-function getEffectiveBirthdate(){
-  return customerRecord?.birthdate || state.customer.birthdate || '';
-}
-
-function applyBirthdateFieldState(){
-  const birth = $('#customerBirthdate');
-  const hint = $('#birthdateHint');
-  if (!birth) return;
-  const locked = Boolean(customerRecord?.birthdate);
-  birth.disabled = locked;
-  birth.readOnly = locked;
-  if (hint) {
-    if (locked) {
-      hint.textContent = 'La fecha de nacimiento ya quedó registrada y no se puede volver a editar.';
-      hint.classList.remove('hidden-block');
-    } else {
-      hint.textContent = 'La fecha se guarda al enviar el primer pedido y después queda bloqueada.';
-      hint.classList.remove('hidden-block');
+  function hydrateKnownCustomer(){
+    const local = window.DIPSA.loadLocalProfile();
+    if (local && local.phone) {
+      mergeCustomer(local);
+      syncForm();
+      refreshBirthdayState();
+      renderBirthdayBanner();
     }
   }
-}
 
-function renderBirthdayGreeting(){
-  const name = customerRecord?.full_name || state.customer.name || '';
-  const shouldShow = Boolean(name && isBirthdayToday(getEffectiveBirthdate()));
-  ['#birthdayGreetingHome', '#birthdayGreetingCheckout'].forEach(selector => {
-    const box = $(selector);
-    if (!box) return;
-    if (!shouldShow) {
-      box.innerHTML = '';
-      box.classList.add('hidden-block');
+  function mergeCustomer(profile){
+    state.customer = Object.assign({}, state.customer, {
+      name: profile.full_name || profile.name || state.customer.name,
+      phone: profile.phone || state.customer.phone,
+      address: profile.address || state.customer.address,
+      zone: profile.zone || state.customer.zone,
+      notes: profile.notes || state.customer.notes,
+      birthdate: profile.birthdate || state.customer.birthdate
+    });
+    persistCustomer();
+  }
+
+  function persistCustomer(){
+    window.DIPSA.saveLocalProfile(state.customer);
+  }
+
+  function syncForm(){
+    $('#customerName').value = state.customer.name || '';
+    $('#customerPhone').value = state.customer.phone || '';
+    $('#customerAddress').value = state.customer.address || '';
+    $('#customerZone').value = state.customer.zone || '';
+    $('#customerPayment').value = state.customer.payment || '';
+    $('#customerNotes').value = state.customer.notes || '';
+    $('#customerBirthdate').value = state.customer.birthdate || '';
+    updateBirthdateFieldState();
+    refreshBirthdayState();
+    updateDeliveryToggle();
+  }
+
+  function renderBrand(){
+    if (!state.store) return;
+    $('#brandLogo').src = state.store.business.logo || 'assets/logo.jpg';
+    $('#brandName').textContent = (state.store.business.name || 'Dipsa').toUpperCase();
+    $('#brandTagline').textContent = state.store.business.tagline || '';
+    $('#heroImage').src = state.store.business.heroImage || 'assets/hero.jpg';
+    $('#heroTitle').textContent = 'Pedí fácil desde tu celu';
+    $('#heroSubtitle').textContent = 'Menú claro, precios en vivo y cierre por WhatsApp.';
+    $('#deliveryText').textContent = state.store.business.deliveryMessage || 'Delivery y pedidos por WhatsApp';
+    $('#deliveryPhone').textContent = state.store.business.phoneDisplay || state.store.business.whatsapp || '';
+    $('#storeStatus').textContent = state.store.business.storeOpen === false ? 'Cerrado' : 'Abierto ahora';
+    $('#promoHeadline').textContent = state.store.business.promoHeadline || 'Promos destacadas';
+  }
+
+  function renderBirthdayBanner(){
+    const wrap = $('#birthdayBannerWrap');
+    if (!wrap || !state.store) return;
+    refreshBirthdayState();
+    if (state.birthdayActive) {
+      const name = state.customer.name ? state.customer.name.split(' ')[0] : 'cumpleañera/o';
+      wrap.innerHTML = '<div class="birthday-banner success"><div><span class="eyebrow pink">Hoy es tu día</span><strong>¡Feliz cumple, ' + escapeHtml(name) + '!</strong><p>Se aplica ' + Number(state.store.business.birthdayDiscountPercent || 20) + '% OFF solo por hoy en tu pedido.</p></div><button class="inline-cta" id="birthdayGoCart">Usar descuento</button></div>';
+      $('#birthdayGoCart').addEventListener('click', function(){ switchScreen('cart'); });
       return;
     }
-    box.innerHTML = `<strong>Feliz cumpleaños, ${name} 🎉</strong><div style="margin-top:6px">Hoy tenés 20% OFF automático en tu compra.</div>`;
-    box.classList.remove('hidden-block');
-  });
-}
 
-function applyCustomerRecord(record, options = {}){
-  customerRecord = record ? { ...record } : null;
-  if (record) {
-    state.customer.name = record.full_name || state.customer.name;
-    if (!options.keepCurrentPhone) state.customer.phone = record.phone || state.customer.phone;
-    state.customer.address = record.address || state.customer.address;
-    state.customer.zone = record.zone || state.customer.zone;
-    state.customer.birthdate = record.birthdate || state.customer.birthdate;
-    setCustomerLookupMessage(record.birthdate ? `Cliente reconocido. Fecha de nacimiento bloqueada para ${record.full_name}.` : `Cliente reconocido. Podés completar la fecha de nacimiento una sola vez.`);
-  } else {
-    customerRecord = null;
-    setCustomerLookupMessage(state.customer.phone ? 'Cliente nuevo. Completá la fecha de nacimiento solo una vez.' : '');
+    wrap.innerHTML = '<div class="birthday-banner"><div><span class="eyebrow pink">Cumpleaños Dipsa</span><strong>Registrá tu fecha una sola vez</strong><p>' + escapeHtml(state.store.business.birthdayBannerText || 'Cargá tu cumpleaños y te avisamos el descuento cuando toque.') + '</p></div><button class="inline-cta ghost" id="birthdayRegisterSecondary">Registrarme</button></div>';
+    $('#birthdayRegisterSecondary').addEventListener('click', function(){ switchScreen('cart'); $('#customerBirthdate').focus(); });
   }
-  syncFormFromState();
-  renderCart();
-  persistState();
-}
 
-async function hydrateCustomerFromPhone(phone, { silent = false } = {}){
-  const digits = window.normalizePhone(phone);
-  const previousRecord = customerRecord ? { ...customerRecord } : null;
-  const previousPhone = window.normalizePhone(previousRecord?.phone || '');
-  const currentToken = ++customerLookupToken;
-  if (!digits || digits.length < 8) {
-    if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
-    customerRecord = null;
-    syncFormFromState();
-    if (!silent) setCustomerLookupMessage('');
-    return;
-  }
-  if (!window.isSupabaseReady(catalog)) {
-    if (!silent) setCustomerLookupMessage('Supabase no está listo todavía.');
-    customerRecord = null;
-    syncFormFromState();
-    return;
-  }
-  if (!silent) setCustomerLookupMessage('Buscando tu registro...');
-  try {
-    const result = await window.lookupCustomerByPhone(digits, catalog);
-    if (currentToken !== customerLookupToken) return;
-    if (result?.found && result.customer) {
-      applyCustomerRecord(result.customer, { keepCurrentPhone:false });
-    } else {
-      if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
-      customerRecord = null;
-      syncFormFromState();
-      if (!silent) setCustomerLookupMessage('Cliente nuevo. Completá tus datos y tu fecha de nacimiento una sola vez.');
-    }
-  } catch (error) {
-    console.warn('No se pudo buscar el cliente', error);
-    if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
-    customerRecord = null;
-    syncFormFromState();
-    if (!silent) setCustomerLookupMessage('No se pudo verificar el cliente ahora, pero podés continuar.');
-  }
-}
+  function renderHome(){
+    if (!state.store) return;
+    const promoWrap = $('#dailyPromos');
+    promoWrap.innerHTML = '';
+    state.store.promotionsDaily.filter(isActivePromo).forEach(function(promo){
+      promoWrap.appendChild(createPromoCard(promo, 'Promo del día'));
+    });
+    state.carouselIndex = 0;
+    promoWrap.scrollTo({ left: 0, behavior: 'auto' });
 
-function switchScreen(screen, options = {}){
-  const { pushHistory = false } = options;
-  state.screen = screen;
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const target = document.getElementById(screen);
-  if (target) target.classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.screen === screen));
-  if (screen === 'promos') setPromoTab(state.promoTab);
-  if (screen === 'menu') {
-    renderMenu();
-    if (state.menuFilter !== 'all') {
-      const section = document.querySelector(`[data-menu-section="${state.menuFilter}"]`);
-      if (section) section.scrollIntoView({ behavior:'smooth', block:'start' });
-    }
+    const grid = $('#categoryGrid');
+    grid.innerHTML = '';
+    state.store.categories.forEach(function(category){
+      const button = document.createElement('button');
+      button.className = 'cat';
+      button.textContent = category;
+      button.addEventListener('click', function(){
+        state.menuFilter = category;
+        switchScreen('menu');
+      });
+      grid.appendChild(button);
+    });
   }
-  if (screen === 'cart') syncFormFromState();
-  if (pushHistory) {
-    window.history.pushState({ screen, menuFilter: state.menuFilter }, '', `#${screen}`);
-  }
-  persistState();
-}
 
-function renderHome(){
-  const dailyWrap = $('#dailyPromos');
-  dailyWrap.innerHTML = '';
-  getActivePromos('daily').forEach((p) => {
+  function renderPromos(){
+    if (!state.store) return;
+    const daily = $('#promoDailyList');
+    const general = $('#promoGeneralList');
+    daily.innerHTML = '';
+    general.innerHTML = '';
+
+    state.store.promotionsDaily.filter(isActivePromo).forEach(function(promo){
+      daily.appendChild(createPromoRow(promo, true));
+    });
+    state.store.promotionsGeneral.filter(isActivePromo).forEach(function(promo){
+      general.appendChild(createPromoRow(promo, false));
+    });
+
+    setPromoTab(state.promoTab);
+  }
+
+  function isActivePromo(item){
+    return item.active !== false;
+  }
+
+  function setPromoTab(tab){
+    state.promoTab = tab;
+    $('#promoChipDaily').classList.toggle('active', tab === 'daily');
+    $('#promoChipGeneral').classList.toggle('active', tab === 'general');
+    $('#promoDailyBlock').classList.toggle('hidden-block', tab !== 'daily');
+    $('#promoGeneralBlock').classList.toggle('hidden-block', tab !== 'general');
+  }
+
+  function createPromoCard(promo, label){
     const article = document.createElement('article');
     article.className = 'card';
-    article.innerHTML = `
-      <img src="${p.image}" alt="${p.name}">
-      <div class="promo-top">
-        <div class="promo-title">${p.name}</div>
-        <span class="badge daily">10% OFF</span>
-      </div>
-      <div class="promo-desc">${p.desc}</div>
-      <div class="price-row">
-        <div><div class="old">${money(p.normal)}</div><div class="new">${money(p.price)}</div></div>
-        <button class="add-btn">Agregar</button>
-      </div>
-    `;
-    article.querySelector('.add-btn').addEventListener('click', () => addToCart({name:p.name, price:p.price, note:'Promo del día'}));
-    dailyWrap.appendChild(article);
-  });
-
-  const grid = $('#categoryGrid');
-  grid.innerHTML = '';
-  HOME_CATEGORIES.forEach(({ label, key }) => {
-    const btn = document.createElement('button');
-    btn.className = 'cat';
-    btn.textContent = label;
-    btn.addEventListener('click', () => openMenuSection(key));
-    grid.appendChild(btn);
-  });
-}
-
-function renderPromos(){
-  const daily = $('#promoDailyList');
-  const general = $('#promoGeneralList');
-  daily.innerHTML = '';
-  general.innerHTML = '';
-  getActivePromos('daily').forEach(p => daily.appendChild(createPromoRow(p, true)));
-  getActivePromos('general').forEach(p => general.appendChild(createPromoRow(p, false)));
-}
-
-function setPromoTab(tab){
-  state.promoTab = tab;
-  $('#promoChipDaily').classList.toggle('active', tab === 'daily');
-  $('#promoChipGeneral').classList.toggle('active', tab === 'general');
-  $('#promoDailyBlock').classList.toggle('hidden-block', tab !== 'daily');
-  $('#promoGeneralBlock').classList.toggle('hidden-block', tab !== 'general');
-  persistState();
-}
-
-function createPromoRow(promo, daily){
-  const article = document.createElement('article');
-  article.className = 'promo-row';
-  article.innerHTML = `
-    <img class="promo-thumb" src="${promo.image}" alt="${promo.name}">
-    <div>
-      <div class="promo-top">
-        <div class="promo-title">${promo.name}</div>
-        <span class="badge ${daily ? 'daily':'general'}">${daily ? '10% OFF':'Activa'}</span>
-      </div>
-      <div class="promo-desc">${promo.desc}</div>
-      <div class="price-row">
-        <div>${promo.normal ? `<div class="old">${money(promo.normal)}</div>` : ''}<div class="new">${money(promo.price)}</div></div>
-        <button class="add-btn">Agregar</button>
-      </div>
-    </div>
-  `;
-  article.querySelector('.add-btn').addEventListener('click', () => addToCart({name:promo.name, price:promo.price, note: daily ? 'Promo del día' : 'Promo general'}));
-  return article;
-}
-
-function renderMenu(){
-  const menu = $('#menuSections');
-  const chips = $('#menuFilterChips');
-  menu.innerHTML = '';
-  chips.innerHTML = '';
-
-  createMenuChip('Todo', 'all');
-  MENU_ORDER.forEach(category => createMenuChip(category, category));
-
-  const categoriesToRender = state.menuFilter === 'all' ? MENU_ORDER : [state.menuFilter];
-  categoriesToRender.forEach(category => {
-    const items = (catalog.products[category] || []).filter(item => item.active !== false);
-    if (!items.length) return;
-    const wrap = document.createElement('section');
-    wrap.className = 'menu-section';
-    wrap.dataset.menuSection = category;
-    const subtitle = categorySubtitle(category);
-    wrap.innerHTML = `
-      <div class="menu-banner compact ${subtitle ? '' : 'no-subtitle'}">
-        <img src="${categoryImage(category)}" alt="${category}">
-        <div class="copy">
-          <strong class="menu-banner-title">${category}</strong>
-          ${subtitle ? `<span class="menu-banner-subtitle">${subtitle}</span>` : ''}
-        </div>
-      </div>
-      <div class="menu-items"></div>
-    `;
-    const itemsWrap = wrap.querySelector('.menu-items');
-    items.forEach(item => itemsWrap.appendChild(createProductCard(category, item)));
-    menu.appendChild(wrap);
-  });
-}
-
-function createMenuChip(label, key){
-  const btn = document.createElement('button');
-  btn.className = 'chip';
-  btn.textContent = label;
-  btn.classList.toggle('active', state.menuFilter === key);
-  btn.addEventListener('click', () => {
-    state.menuFilter = key;
-    renderMenu();
-    persistState();
-  });
-  $('#menuFilterChips').appendChild(btn);
-}
-
-function createProductCard(category, item){
-  const article = document.createElement('article');
-  article.className = `product-card ${item.active === false ? 'is-hidden-product' : ''} ${item.inStock === false ? 'is-out' : ''}`;
-  const stockLabel = item.inStock === false ? '<span class="stock-badge out">Sin stock</span>' : '<span class="stock-badge">Disponible</span>';
-  const detail = item.detail ? `<div class="product-detail">${item.detail}</div>` : '';
-  article.innerHTML = `
-    <div class="product-head">
-      <div>
-        <div class="product-name">${item.name}</div>
-        ${detail}
-      </div>
-      ${stockLabel}
-    </div>
-    <div class="product-actions">
-      <div>
-        <div class="product-price">${money(item.price)}</div>
-        ${item.allowHalf ? `<div class="product-subprice">Media pizza: ${money(Math.round(item.price / 2))}</div>` : ''}
-      </div>
-      <div class="product-buttons"></div>
-    </div>
-  `;
-
-  const buttons = article.querySelector('.product-buttons');
-  if (item.active === false) {
-    article.classList.add('visually-muted');
-    buttons.innerHTML = '<span class="small-note">Oculto en admin</span>';
+    article.innerHTML = [
+      '<img src="' + escapeAttribute(promo.image_url) + '" alt="' + escapeAttribute(promo.name) + '">',
+      '<div class="promo-top"><div class="promo-title">' + escapeHtml(promo.name) + '</div><span class="badge daily">' + escapeHtml(label) + '</span></div>',
+      '<div class="promo-desc">' + escapeHtml(promo.description || '') + '</div>',
+      '<div class="price-row"><div>' + (promo.normal_price ? '<div class="old">' + window.DIPSA.money(promo.normal_price) + '</div>' : '') + '<div class="new">' + window.DIPSA.money(promo.promo_price) + '</div></div><button class="add-btn">Agregar</button></div>'
+    ].join('');
+    article.querySelector('.add-btn').addEventListener('click', function(){
+      addToCart({ id: promo.id, name: promo.name, price: promo.promo_price, note: 'Promo' });
+    });
     return article;
   }
 
-  if (item.inStock === false) {
-    const disabled = document.createElement('button');
-    disabled.className = 'add-btn disabled';
-    disabled.textContent = 'Sin stock';
-    disabled.disabled = true;
-    buttons.appendChild(disabled);
+  function createPromoRow(promo, isDaily){
+    const row = document.createElement('article');
+    row.className = 'promo-row';
+    row.innerHTML = [
+      '<img class="promo-thumb" src="' + escapeAttribute(promo.image_url) + '" alt="' + escapeAttribute(promo.name) + '">',
+      '<div><div class="promo-top"><div class="promo-title">' + escapeHtml(promo.name) + '</div><span class="badge ' + (isDaily ? 'daily' : 'general') + '">' + (isDaily ? 'Hoy' : 'General') + '</span></div>',
+      '<div class="promo-desc">' + escapeHtml(promo.description || '') + '</div>',
+      '<div class="price-row"><div>' + (promo.normal_price ? '<div class="old">' + window.DIPSA.money(promo.normal_price) + '</div>' : '') + '<div class="new">' + window.DIPSA.money(promo.promo_price) + '</div></div><button class="add-btn">Agregar</button></div></div>'
+    ].join('');
+    row.querySelector('.add-btn').addEventListener('click', function(){
+      addToCart({ id: promo.id, name: promo.name, price: promo.promo_price, note: isDaily ? 'Promo del día' : 'Promo general' });
+    });
+    return row;
+  }
+
+  function renderMenu(){
+    if (!state.store) return;
+    const chips = $('#menuFilterChips');
+    chips.innerHTML = '';
+    createMenuChip('Todo', 'all');
+    state.store.categories.forEach(function(category){ createMenuChip(category, category); });
+
+    const sections = $('#menuSections');
+    sections.innerHTML = '';
+    const categories = state.menuFilter === 'all' ? state.store.categories : [state.menuFilter];
+    categories.forEach(function(category){
+      const items = (state.store.products[category] || []).filter(function(item){ return item.active !== false; });
+      if (!items.length) return;
+      const section = document.createElement('section');
+      section.className = 'menu-section';
+      section.innerHTML = '<div class="menu-banner compact"><img src="' + escapeAttribute(window.DIPSA.getCategoryImage(category)) + '" alt="' + escapeAttribute(category) + '"><div class="copy"><strong class="menu-banner-title">' + escapeHtml(category) + '</strong><span class="menu-banner-subtitle">' + escapeHtml(categorySubtitle(category)) + '</span></div></div><div class="menu-items"></div>';
+      const itemsWrap = section.querySelector('.menu-items');
+      items.forEach(function(item){ itemsWrap.appendChild(createProductCard(item)); });
+      sections.appendChild(section);
+    });
+  }
+
+  function createMenuChip(label, key){
+    const button = document.createElement('button');
+    button.className = 'chip';
+    button.textContent = label;
+    button.classList.toggle('active', state.menuFilter === key);
+    button.addEventListener('click', function(){
+      state.menuFilter = key;
+      renderMenu();
+    });
+    $('#menuFilterChips').appendChild(button);
+  }
+
+  function createProductCard(item){
+    const article = document.createElement('article');
+    article.className = 'product-card' + (item.in_stock === false ? ' is-out' : '');
+    article.innerHTML = [
+      '<div class="product-head"><div><div class="product-name">' + escapeHtml(item.name) + '</div>' + (item.detail ? '<div class="product-detail">' + escapeHtml(item.detail) + '</div>' : '') + '</div><span class="stock-badge ' + (item.in_stock === false ? 'out' : '') + '">' + (item.in_stock === false ? 'Sin stock' : 'Disponible') + '</span></div>',
+      '<div class="product-actions"><div><div class="product-price">' + window.DIPSA.money(item.price) + '</div>' + (item.allow_half ? '<div class="product-subprice">Media pizza: ' + window.DIPSA.money(Math.round(item.price / 2)) + '</div>' : '') + '</div><div class="product-buttons"></div></div>'
+    ].join('');
+    const buttons = article.querySelector('.product-buttons');
+    if (item.in_stock === false) {
+      const disabled = document.createElement('button');
+      disabled.className = 'add-btn disabled';
+      disabled.textContent = 'Sin stock';
+      disabled.disabled = true;
+      buttons.appendChild(disabled);
+      return article;
+    }
+
+    if (item.category === 'Pizzas' && item.allow_half) {
+      const fullButton = document.createElement('button');
+      fullButton.className = 'add-btn';
+      fullButton.textContent = 'Entera';
+      fullButton.addEventListener('click', function(){ addToCart({ id:item.id, name:'Pizza ' + item.name + ' entera', price:item.price, note:'' }); });
+      const halfButton = document.createElement('button');
+      halfButton.className = 'add-btn secondary-mini';
+      halfButton.textContent = '1/2';
+      halfButton.addEventListener('click', function(){ addToCart({ id:item.id + '-half', name:'Pizza ' + item.name + ' media', price:Math.round(item.price / 2), note:'' }); });
+      buttons.appendChild(fullButton);
+      buttons.appendChild(halfButton);
+      return article;
+    }
+
+    const addButton = document.createElement('button');
+    addButton.className = 'add-btn';
+    addButton.textContent = 'Agregar';
+    addButton.addEventListener('click', function(){
+      if (item.category === 'Panchos') return openPanchoDialog(item);
+      if (item.category === 'Empanadas') return openEmpanadaDialog(item);
+      addToCart({ id:item.id, name:item.name, price:item.price, note:'' });
+    });
+    buttons.appendChild(addButton);
     return article;
   }
 
-  if (category === 'Pizzas' && item.allowHalf) {
-    const fullBtn = document.createElement('button');
-    fullBtn.className = 'add-btn';
-    fullBtn.textContent = 'Entera';
-    fullBtn.addEventListener('click', () => addToCart({ name:`Pizza ${item.name} entera`, price:item.price }));
-    const halfBtn = document.createElement('button');
-    halfBtn.className = 'add-btn secondary-mini';
-    halfBtn.textContent = '1/2';
-    halfBtn.addEventListener('click', () => addToCart({ name:`Pizza ${item.name} media`, price:Math.round(item.price / 2) }));
-    buttons.append(fullBtn, halfBtn);
-    return article;
+  function openPanchoDialog(item){
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = '<div class="modal-card"><div class="modal-head"><div><div class="eyebrow">Panchos</div><strong>' + escapeHtml(item.name) + '</strong></div><button class="modal-close" type="button">×</button></div><p class="modal-copy">Marcá opciones y escribí aclaraciones.</p><div class="emp-grid">' + (item.options || []).map(function(option){ return '<label class="switch-row emp-check"><input type="checkbox" value="' + escapeAttribute(option) + '"><span>' + escapeHtml(option) + '</span></label>'; }).join('') + '</div><label class="emp-note-wrap"><span>Gustos o aderezos</span><textarea id="panchoCustomNote" rows="3" placeholder="Ej: con cheddar, sin cebolla, con papas pay"></textarea></label><div class="modal-actions"><button class="chip" data-action="cancel" type="button">Cancelar</button><button class="add-btn" data-action="confirm" type="button">Agregar</button></div></div>';
+    bindModalClose(overlay);
+    overlay.querySelector('[data-action="confirm"]').addEventListener('click', function(){
+      const checks = Array.from(overlay.querySelectorAll('input[type="checkbox"]:checked')).map(function(node){ return node.value; });
+      const note = overlay.querySelector('#panchoCustomNote').value.trim();
+      const parts = [];
+      if (checks.length) parts.push('Opciones: ' + checks.join(', '));
+      if (note) parts.push(note);
+      addToCart({ id:item.id, name:item.name, price:item.price, note:parts.join(' · ') });
+      overlay.remove();
+    });
+    document.body.appendChild(overlay);
   }
 
-  const addBtn = document.createElement('button');
-  addBtn.className = 'add-btn';
-  addBtn.textContent = 'Agregar';
-  addBtn.addEventListener('click', () => handleAddProduct(category, item));
-  buttons.appendChild(addBtn);
-  return article;
-}
-
-function handleAddProduct(category, item){
-  if (category === 'Panchos') {
-    openPanchosDialog(item);
-    return;
+  function openEmpanadaDialog(item){
+    const flavors = String(item.detail || '')
+      .replace(/^sabores:\s*/i, '')
+      .split(',')
+      .map(function(value){ return value.trim(); })
+      .filter(Boolean);
+    const expected = window.DIPSA.detectEmpanadaTarget(item.name);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = '<div class="modal-card"><div class="modal-head"><div><div class="eyebrow">Empanadas</div><strong>' + escapeHtml(item.name) + '</strong></div><button class="modal-close" type="button">×</button></div><p class="modal-copy">Elegí cantidades por sabor' + (expected ? ' para completar ' + expected : '') + '.</p><div class="emp-grid">' + flavors.map(function(flavor){ return '<label class="emp-row"><span>' + escapeHtml(flavor) + '</span><input type="number" min="0" step="1" value="0" data-flavor="' + escapeAttribute(flavor) + '"></label>'; }).join('') + '</div><div class="small-note" id="empHint"></div><label class="emp-note-wrap"><span>Fritas / al horno / notas</span><textarea rows="2" id="empNote" placeholder="Ej: fritas, 2 bien cocidas"></textarea></label><div class="modal-actions"><button class="chip" data-action="cancel" type="button">Cancelar</button><button class="add-btn" data-action="confirm" type="button">Agregar</button></div></div>';
+    bindModalClose(overlay);
+    const hint = overlay.querySelector('#empHint');
+    const inputs = Array.from(overlay.querySelectorAll('input[data-flavor]'));
+    function refreshHint(){
+      if (!expected) { hint.textContent = ''; return; }
+      const total = inputs.reduce(function(sum, input){ return sum + Number(input.value || 0); }, 0);
+      if (total === expected) hint.textContent = 'Perfecto: elegiste ' + total + '.';
+      else if (total < expected) hint.textContent = 'Te faltan ' + (expected - total) + ' para completar ' + expected + '.';
+      else hint.textContent = 'Te pasaste por ' + (total - expected) + '.';
+    }
+    inputs.forEach(function(input){ input.addEventListener('input', refreshHint); });
+    refreshHint();
+    overlay.querySelector('[data-action="confirm"]').addEventListener('click', function(){
+      const selected = inputs.map(function(input){
+        return { flavor: input.dataset.flavor, qty: Number(input.value || 0) };
+      }).filter(function(entry){ return entry.qty > 0; });
+      const note = overlay.querySelector('#empNote').value.trim();
+      const detailParts = [];
+      if (selected.length) detailParts.push(selected.map(function(entry){ return entry.qty + ' ' + entry.flavor; }).join(' · '));
+      if (note) detailParts.push(note);
+      addToCart({ id:item.id, name:item.name, price:item.price, note:detailParts.join(' · ') });
+      overlay.remove();
+    });
+    document.body.appendChild(overlay);
   }
 
-  if (category === 'Empanadas') {
-    openEmpanadasDialog(item);
-    return;
+  function bindModalClose(overlay){
+    overlay.addEventListener('click', function(event){ if (event.target === overlay) overlay.remove(); });
+    overlay.querySelector('.modal-close').addEventListener('click', function(){ overlay.remove(); });
+    overlay.querySelector('[data-action="cancel"]').addEventListener('click', function(){ overlay.remove(); });
   }
 
-  addToCart({ name:item.name, price:item.price });
-}
+  function addToCart(item){
+    state.cart.push({
+      id: item.id || window.DIPSA.uid('cart'),
+      name: item.name,
+      price: Number(item.price || 0),
+      note: item.note || ''
+    });
+    window.DIPSA.saveLocalCart(state.cart);
+    renderCart();
+  }
 
-function openMenuSection(category){
-  state.menuFilter = category;
-  switchScreen('menu', { pushHistory:true });
-}
 
-function addToCart(item){
-  const cleanItem = {
-    name: item.name,
-    price: Number(item.price || 0),
-    note: item.note || ''
-  };
-  state.cart.push(cleanItem);
-  renderCart();
-  persistState();
-}
-
-function openPanchosDialog(item){
-  const options = Array.isArray(item.options) ? item.options : [];
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal-card emp-modal" role="dialog" aria-modal="true" aria-label="Elegir aderezos y gustos">
-      <div class="modal-head">
-        <div>
-          <div class="eyebrow">Panchos</div>
-          <strong>${item.name}</strong>
-        </div>
-        <button class="modal-close" aria-label="Cerrar">×</button>
-      </div>
-      <p class="modal-copy">Marcá opciones y escribí los gustos o aderezos para que salgan claros en el pedido.</p>
-      <div class="emp-grid">
-        ${options.length ? options.map(option => `
-          <label class="switch-row emp-check">
-            <input type="checkbox" value="${option}">
-            <span>${option}</span>
-          </label>
-        `).join('') : '<div class="small-note">Sin opciones precargadas.</div>'}
-      </div>
-      <label class="emp-note-wrap">
-        <span>Gustos y aderezos</span>
-        <textarea id="panchoCustomNote" rows="3" placeholder="Ej: con cheddar y papas pay, sin cebolla, sabor pizza, etc."></textarea>
-      </label>
-      <div class="modal-actions">
-        <button class="chip" data-action="cancel">Cancelar</button>
-        <button class="add-btn" data-action="confirm">Agregar</button>
-      </div>
-    </div>
-  `;
-  const close = () => overlay.remove();
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close();
-  });
-  overlay.querySelector('.modal-close').addEventListener('click', close);
-  overlay.querySelector('[data-action="cancel"]').addEventListener('click', close);
-  overlay.querySelector('[data-action="confirm"]').addEventListener('click', () => {
-    const selected = Array.from(overlay.querySelectorAll('input[type="checkbox"]:checked')).map(el => el.value);
-    const custom = overlay.querySelector('#panchoCustomNote').value.trim();
-    const detailParts = [];
-    if (selected.length) detailParts.push(`Opciones: ${selected.join(', ')}`);
-    if (custom) detailParts.push(custom);
-    addToCart({ name:item.name, price:item.price, note:detailParts.join(' · ') });
-    close();
-  });
-  document.body.appendChild(overlay);
-}
-
-function openEmpanadasDialog(item){
-  const flavorSource = (catalog.products.Empanadas || []).find(x => (x.detail || '').length);
-  const flavors = (flavorSource?.detail || '')
-    .replace(/^sabores:\s*/i, '')
-    .split(',')
-    .map(v => v.trim())
-    .filter(Boolean);
-
-  const expectedQty = detectEmpanadaTarget(item.name);
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `
-    <div class="modal-card emp-modal" role="dialog" aria-modal="true" aria-label="Elegir sabores de empanadas">
-      <div class="modal-head">
-        <div>
-          <div class="eyebrow">Empanadas</div>
-          <strong>${item.name}</strong>
-        </div>
-        <button class="modal-close" aria-label="Cerrar">×</button>
-      </div>
-      <p class="modal-copy">Indicá cuántas querés de cada sabor${expectedQty ? ` (total sugerido: ${expectedQty})` : ''}.</p>
-      <div class="emp-grid">
-        ${flavors.length ? flavors.map((flavor, idx) => `
-          <label class="emp-row">
-            <span>${flavor}</span>
-            <input type="number" min="0" step="1" value="0" data-flavor="${flavor}" ${idx===0 ? 'autofocus' : ''}>
-          </label>
-        `).join('') : '<div class="small-note">No hay sabores cargados en datos.</div>'}
-      </div>
-      <div id="empCountHint" class="small-note${expectedQty ? '' : ' hidden-block'}"></div>
-      <label class="emp-note-wrap">
-        <span>Fritas o al horno / aclaraciones</span>
-        <textarea id="empExtraNote" rows="2" placeholder="Ej: fritas, 2 bien cocidas, 1 sin aceitunas, salsa aparte, etc."></textarea>
-      </label>
-      <div class="modal-actions">
-        <button class="chip" data-action="cancel">Cancelar</button>
-        <button class="add-btn" data-action="confirm">Agregar</button>
-      </div>
-    </div>
-  `;
-
-  const close = () => overlay.remove();
-  const inputs = Array.from(overlay.querySelectorAll('input[data-flavor]'));
-  const hint = overlay.querySelector('#empCountHint');
-  const refreshHint = () => {
-    if (!expectedQty || !hint) return;
-    const totalSelected = inputs.reduce((acc, input) => acc + Number(input.value || 0), 0);
-    if (totalSelected === expectedQty) {
-      hint.textContent = `Perfecto: elegiste ${totalSelected} empanadas.`;
-    } else if (totalSelected < expectedQty) {
-      hint.textContent = `Te faltan ${expectedQty - totalSelected} para completar ${expectedQty}.`;
+  function updateBirthdateFieldState(){
+    const field = $('#customerBirthdate');
+    if (!field) return;
+    const locked = !!state.customer.birthdate;
+    field.disabled = locked;
+    field.readOnly = locked;
+    field.classList.toggle('is-locked', locked);
+    if (locked) {
+      field.setAttribute('title', 'La fecha de cumpleaños ya quedó registrada y no se puede editar.');
     } else {
-      hint.textContent = `Elegiste ${totalSelected}. Te pasaste por ${totalSelected - expectedQty}.`;
+      field.removeAttribute('title');
     }
-  };
-  refreshHint();
-  inputs.forEach(input => input.addEventListener('input', refreshHint));
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close();
-  });
-  overlay.querySelector('.modal-close').addEventListener('click', close);
-  overlay.querySelector('[data-action="cancel"]').addEventListener('click', close);
-  overlay.querySelector('[data-action="confirm"]').addEventListener('click', () => {
-    const selected = inputs
-      .map(input => ({ flavor: input.dataset.flavor, qty: Number(input.value || 0) }))
-      .filter(entry => entry.qty > 0);
-    const extra = overlay.querySelector('#empExtraNote').value.trim();
-    const detailParts = [];
-    if (selected.length) detailParts.push(selected.map(entry => `${entry.qty} ${entry.flavor}`).join(' · '));
-    if (extra) detailParts.push(extra);
-    addToCart({ name:item.name, price:item.price, note: detailParts.join(' · ') });
-    close();
-  });
-
-  document.body.appendChild(overlay);
-}
-
-function detectEmpanadaTarget(name){
-  const lower = (name || '').toLowerCase();
-  if (lower.includes('docena')) return 12;
-  if (lower.includes('media')) return 6;
-  if (lower.includes('unidad')) return 1;
-  return 0;
-}
-
-function updateToggles(){
-  $('#deliveryToggle').classList.toggle('active', state.delivery);
-  $('#pickupToggle').classList.toggle('active', !state.delivery);
-  document.querySelectorAll('.delivery-only').forEach(el => el.classList.toggle('hidden-block', !state.delivery));
-  const address = $('#customerAddress');
-  if (address) address.disabled = !state.delivery;
-}
-
-function renderCart(){
-  const wrap = $('#cartItems');
-  wrap.innerHTML = '';
-  if (!state.cart.length) {
-    wrap.innerHTML = '<div class="empty-cart">Todavía no agregaste productos.</div>';
   }
-  state.cart.forEach((item, index) => {
-    const row = document.createElement('div');
-    row.className = 'cart-item';
-    row.innerHTML = `
-      <div>
-        <div class="cart-name">${item.name}</div>
-        ${item.note ? `<div class="cart-note">${item.note}</div>` : ''}
-      </div>
-      <div class="cart-side">
-        <strong style="color:#5a1ea3">${money(item.price)}</strong>
-        <button class="qty-btn" aria-label="Agregar uno igual">+</button>
-        <button class="remove-item" aria-label="Quitar producto">×</button>
-      </div>
-    `;
-    row.querySelector('.remove-item').addEventListener('click', () => {
-      state.cart.splice(index, 1);
-      renderCart();
-      persistState();
+
+  function startPromoCarousel(){
+    if (state.carouselTimer) clearInterval(state.carouselTimer);
+    state.carouselTimer = setInterval(advancePromoCarousel, 4500);
+  }
+
+  function advancePromoCarousel(){
+    const wrap = $('#dailyPromos');
+    if (!wrap || state.screen !== 'home' || document.visibilityState !== 'visible') return;
+    const cards = Array.prototype.slice.call(wrap.children || []);
+    if (cards.length < 2) return;
+    state.carouselIndex = (state.carouselIndex + 1) % cards.length;
+    const target = cards[state.carouselIndex];
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+  }
+
+  function renderCart(){
+    const wrap = $('#cartItems');
+    wrap.innerHTML = '';
+    if (!state.cart.length) wrap.innerHTML = '<div class="empty-cart">Todavía no agregaste productos.</div>';
+    state.cart.forEach(function(item, index){
+      const row = document.createElement('div');
+      row.className = 'cart-item';
+      row.innerHTML = '<div><div class="cart-name">' + escapeHtml(item.name) + '</div>' + (item.note ? '<div class="cart-note">' + escapeHtml(item.note) + '</div>' : '') + '</div><div class="cart-side"><strong style="color:#5a1ea3">' + window.DIPSA.money(item.price) + '</strong><button class="qty-btn" type="button">+</button><button class="remove-item" type="button">×</button></div>';
+      row.querySelector('.qty-btn').addEventListener('click', function(){
+        state.cart.splice(index + 1, 0, Object.assign({}, item));
+        window.DIPSA.saveLocalCart(state.cart);
+        renderCart();
+      });
+      row.querySelector('.remove-item').addEventListener('click', function(){
+        state.cart.splice(index, 1);
+        window.DIPSA.saveLocalCart(state.cart);
+        renderCart();
+      });
+      wrap.appendChild(row);
     });
-    row.querySelector('.qty-btn').addEventListener('click', () => {
-      state.cart.splice(index + 1, 0, { ...item });
-      renderCart();
-      persistState();
+
+    refreshBirthdayState();
+    const subtotal = state.cart.reduce(function(sum, item){ return sum + Number(item.price || 0); }, 0);
+    const delivery = state.delivery ? Number((state.store && state.store.business.deliveryFee) || 0) : 0;
+    const birthdayDiscount = state.birthdayActive ? Math.round(subtotal * Number((state.store && state.store.business.birthdayDiscountPercent) || 20) / 100) : 0;
+    const total = subtotal + delivery - birthdayDiscount;
+
+    $('#subtotal').textContent = window.DIPSA.money(subtotal);
+    $('#deliveryCost').textContent = window.DIPSA.money(delivery);
+    $('#birthdayDiscount').textContent = birthdayDiscount ? '-' + window.DIPSA.money(birthdayDiscount) : window.DIPSA.money(0);
+    $('#total').textContent = window.DIPSA.money(total);
+  }
+
+  function updateDeliveryToggle(){
+    $('#deliveryToggle').classList.toggle('active', state.delivery);
+    $('#pickupToggle').classList.toggle('active', !state.delivery);
+    document.querySelectorAll('.delivery-only').forEach(function(node){
+      node.classList.toggle('hidden-block', !state.delivery);
     });
-    wrap.appendChild(row);
-  });
-  const subtotal = state.cart.reduce((a,b) => a + b.price, 0);
-  const delivery = state.delivery ? catalog.business.deliveryFee : 0;
-  state.birthday = isBirthdayToday(getEffectiveBirthdate());
-  const birthday = state.birthday ? Math.round(subtotal * 0.2) : 0;
-  const total = subtotal + delivery - birthday;
-  $('#subtotal').textContent = money(subtotal);
-  $('#deliveryCost').textContent = money(delivery);
-  $('#birthdayDiscount').textContent = birthday ? '-' + money(birthday) : money(0);
-  $('#total').textContent = money(total);
-}
-
-async function sendWhatsApp(){
-  const customer = collectCustomerData();
-  if (!state.cart.length) {
-    alert('Agregá al menos un producto antes de enviar el pedido.');
-    return;
-  }
-  if (!customer.name.trim()) {
-    alert('Completá tu nombre y apellido.');
-    $('#customerName').focus();
-    return;
-  }
-  if (!customer.phone.trim()) {
-    alert('Completá tu teléfono.');
-    $('#customerPhone').focus();
-    return;
-  }
-  if (state.delivery && !customer.address.trim()) {
-    alert('Completá la dirección para el delivery.');
-    $('#customerAddress').focus();
-    return;
+    $('#customerAddress').disabled = !state.delivery;
   }
 
-  const subtotal = state.cart.reduce((a,b) => a + b.price, 0);
-  const delivery = state.delivery ? catalog.business.deliveryFee : 0;
-  state.birthday = isBirthdayToday(getEffectiveBirthdate());
-  let birthday = state.birthday ? Math.round(subtotal * 0.2) : 0;
-  let total = subtotal + delivery - birthday;
-  let orderCode = '';
+  function refreshBirthdayState(){
+    state.birthdayActive = window.DIPSA.isBirthdayToday(state.customer.birthdate);
+    updateBirthdateFieldState();
+    $('#birthdayHelp').textContent = state.birthdayActive
+      ? 'Se detectó tu cumpleaños y el descuento se aplica solo hoy. Vuelve a activarse recién el año que viene.'
+      : (state.customer.birthdate
+          ? 'Tu cumpleaños ya quedó registrado. Ese descuento se vuelve a activar solo una vez por año, en tu día.'
+          : 'Cargá tu fecha de nacimiento una sola vez para activar el descuento el día que toque.');
+  }
 
-  if (window.isSupabaseReady(catalog)) {
-    setCheckoutStatus('Guardando cliente y pedido...', 'info');
+  async function submitOrder(){
+    if (!state.store) return;
+    collectCustomer();
+    if (!state.cart.length) return alert('Agregá al menos un producto antes de enviar el pedido.');
+    if (!state.customer.name.trim()) return focusError('#customerName', 'Completá tu nombre y apellido.');
+    if (!state.customer.phone.trim()) return focusError('#customerPhone', 'Completá tu teléfono.');
+    if (state.delivery && !state.customer.address.trim()) return focusError('#customerAddress', 'Completá la dirección para el delivery.');
+
+    refreshBirthdayState();
+    const subtotal = state.cart.reduce(function(sum, item){ return sum + Number(item.price || 0); }, 0);
+    const delivery = state.delivery ? Number(state.store.business.deliveryFee || 0) : 0;
+    const birthdayDiscount = state.birthdayActive ? Math.round(subtotal * Number(state.store.business.birthdayDiscountPercent || 20) / 100) : 0;
+    const total = subtotal + delivery - birthdayDiscount;
+
+    const orderPayload = {
+      business: state.store.business.name,
+      created_at: new Date().toISOString(),
+      delivery: state.delivery,
+      customer: {
+        name: state.customer.name,
+        phone: window.DIPSA.normalizePhone(state.customer.phone),
+        address: state.delivery ? state.customer.address : '',
+        zone: state.customer.zone,
+        payment: state.customer.payment,
+        notes: state.customer.notes,
+        birthdate: state.customer.birthdate
+      },
+      items: state.cart,
+      totals: {
+        subtotal: subtotal,
+        delivery: delivery,
+        birthday_discount: birthdayDiscount,
+        total: total
+      }
+    };
+
     try {
-      const checkout = await window.createCheckoutOrder({
-        name: customer.name,
-        phone: customer.phone,
-        address: state.delivery ? customer.address : '',
-        zone: customer.zone || '',
-        payment: customer.payment || '',
-        notes: customer.notes || '',
-        birthdate: customer.birthdate || '',
-        delivery: state.delivery,
-        items: state.cart,
-        subtotal,
-        delivery_fee: delivery
-      }, catalog);
-      if (checkout.customer) applyCustomerRecord(checkout.customer, { silent:false, keepCurrentPhone:true });
-      birthday = Number(checkout.order?.birthday_discount || birthday || 0);
-      total = Number(checkout.order?.total || total || 0);
-      orderCode = checkout.order?.order_code || '';
-      state.birthday = birthday > 0;
-      renderCart();
-      setCheckoutStatus(orderCode ? `Pedido ${orderCode} guardado. Ahora se abre WhatsApp.` : 'Pedido guardado. Ahora se abre WhatsApp.', 'success');
+      const savedProfile = await window.DIPSA.registerCustomerProfile(state.customer);
+      if (savedProfile) {
+        mergeCustomer(savedProfile);
+        syncForm();
+      }
+      await window.DIPSA.saveOrder(orderPayload);
     } catch (error) {
-      console.error('No se pudo registrar el checkout', error);
-      setCheckoutStatus('No se pudo guardar el pedido en Supabase.', 'error');
-      alert('No se pudo guardar el cliente o el pedido en Supabase. Revisá el SQL, la URL y la clave antes de seguir.');
-      return;
+      console.warn('No se pudo guardar el pedido en Supabase:', error.message);
     }
-  } else {
-    setCheckoutStatus('Supabase no está configurado. El pedido saldrá por WhatsApp pero no quedará registrado.', 'warn');
+
+    window.DIPSA.saveLocalProfile(state.customer);
+    window.DIPSA.saveLocalCart(state.cart);
+
+    const message = [
+      'Hola ' + (state.store.business.name || 'Dipsa') + ', quiero hacer este pedido:',
+      '',
+      state.cart.map(function(item){ return '- ' + item.name + (item.note ? ' (' + item.note + ')' : '') + ' — ' + window.DIPSA.money(item.price); }).join('\n'),
+      '',
+      'Modalidad: ' + (state.delivery ? 'Delivery' : 'Retiro'),
+      'Subtotal: ' + window.DIPSA.money(subtotal),
+      'Delivery: ' + window.DIPSA.money(delivery),
+      'Descuento cumpleaños: -' + window.DIPSA.money(birthdayDiscount),
+      'Total final: ' + window.DIPSA.money(total),
+      '',
+      'Nombre: ' + state.customer.name,
+      'Teléfono: ' + state.customer.phone,
+      'Zona: ' + (state.customer.zone || '-'),
+      'Dirección: ' + (state.delivery ? (state.customer.address || '-') : 'Retira en el local'),
+      'Pago: ' + (state.customer.payment || '-'),
+      'Fecha de nacimiento: ' + (state.customer.birthdate || '-'),
+      'Observaciones: ' + (state.customer.notes || '-')
+    ].join('\n');
+
+    const phone = (state.store.business.whatsapp || '').replace(/\D+/g, '');
+    window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(message), '_blank');
   }
 
-  const items = state.cart.map(i => `- ${i.name}${i.note ? ` (${i.note})` : ''} — ${money(i.price)}`).join('\n');
-  const msg = [
-    `Hola ${catalog.business.name || 'Dipsa'}, quiero hacer este pedido:`,
-    '',
-    orderCode ? `Codigo del pedido: ${orderCode}` : '',
-    orderCode ? '' : '',
-    items,
-    '',
-    `Modalidad: ${state.delivery ? 'Delivery' : 'Retiro'}`,
-    `Subtotal: ${money(subtotal)}`,
-    `Delivery: ${money(delivery)}`,
-    `Descuento cumpleaños: -${money(birthday)}`,
-    `Total final: ${money(total)}`,
-    '',
-    `Nombre: ${customer.name}`,
-    `Teléfono: ${customer.phone}`,
-    `Zona: ${customer.zone || '-'}`,
-    `Dirección: ${state.delivery ? (customer.address || '-') : 'Retira en el local'}`,
-    `Pago: ${customer.payment || '-'}`,
-    `Fecha de nacimiento: ${getEffectiveBirthdate() || '-'}`,
-    `Observaciones: ${customer.notes || '-'}`
-  ].filter(Boolean).join('\n');
-  persistState();
-  window.open(`https://wa.me/${catalog.business.whatsapp}?text=${encodeURIComponent(msg)}`, '_blank');
-}
+  function collectCustomer(){
+    state.customer = {
+      name: $('#customerName').value.trim(),
+      phone: $('#customerPhone').value.trim(),
+      address: $('#customerAddress').value.trim(),
+      zone: $('#customerZone').value.trim(),
+      payment: $('#customerPayment').value.trim(),
+      notes: $('#customerNotes').value.trim(),
+      birthdate: $('#customerBirthdate').value
+    };
+    persistCustomer();
+  }
 
-function isBirthdayToday(value){
-  if (!value) return false;
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return false;
-  const today = new Date();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  return match[2] === month && match[3] === day;
-}
+  function focusError(selector, message){
+    alert(message);
+    $(selector).focus();
+  }
 
-function collectCustomerData(){
-  state.customer = {
-    name: $('#customerName')?.value?.trim() || '',
-    phone: $('#customerPhone')?.value?.trim() || '',
-    address: $('#customerAddress')?.value?.trim() || '',
-    zone: $('#customerZone')?.value || '',
-    payment: $('#customerPayment')?.value || '',
-    notes: $('#customerNotes')?.value?.trim() || '',
-    birthdate: customerRecord?.birthdate || $('#customerBirthdate')?.value || ''
-  };
-  persistState();
-  return state.customer;
-}
+  function openBusinessWhatsApp(){
+    if (!state.store) return;
+    const phone = (state.store.business.whatsapp || '').replace(/\D+/g, '');
+    window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent('Hola ' + state.store.business.name + ', quiero hacer un pedido.'), '_blank');
+  }
 
-function openBusinessWhatsApp(){
-  const msg = encodeURIComponent(`Hola ${catalog.business.name || 'Dipsa'}, quiero hacer un pedido.`);
-  window.open(`https://wa.me/${catalog.business.whatsapp}?text=${msg}`, '_blank');
-}
+  function switchScreen(screen){
+    state.screen = screen;
+    document.querySelectorAll('.screen').forEach(function(node){ node.classList.remove('active'); });
+    document.querySelectorAll('.nav-btn').forEach(function(node){ node.classList.toggle('active', node.dataset.screen === screen); });
+    const target = document.getElementById(screen);
+    if (target) target.classList.add('active');
+    if (screen === 'menu') renderMenu();
+    if (screen === 'promos') setPromoTab(state.promoTab);
+  }
 
-function getActivePromos(type){
-  const list = type === 'general' ? catalog.promosGeneral : catalog.promosDaily;
-  return list.filter(promo => promo.active !== false);
-}
+  function categorySubtitle(category){
+    const map = {
+      Pizzas: 'Elegí entera o media',
+      Panchos: 'Con gustos y aderezos',
+      Empanadas: 'Fritas o al horno',
+      Milanesas: 'Pollo o carne',
+      Hamburguesas: 'Con medallón casero',
+      Papas: 'Papas fritas y especiales',
+      Bebidas: 'Frías para acompañar',
+      Cervezas: 'Latas y botellas'
+    };
+    return map[category] || 'Menú';
+  }
 
-function startPromoCarousel(){
-  const wrap = $('#dailyPromos');
-  if (!wrap) return;
-  if (carouselInterval) clearInterval(carouselInterval);
-  carouselInterval = setInterval(() => {
-    if (state.screen !== 'home') return;
-    const first = wrap.querySelector('.card');
-    if (!first || wrap.children.length < 2) return;
-    wrap.appendChild(first);
-    wrap.scrollTo({ left:0, behavior:'smooth' });
-  }, 4000);
-}
+  function escapeHtml(value){
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-function categoryImage(category){
-  return {
-    Pizzas:'assets/pizza.jpg',
-    Panchos:'assets/pancho.jpg',
-    Empanadas:'assets/empanadas.jpg',
-    Milanesas:'assets/mila.jpg',
-    Hamburguesas:'assets/burger.jpg',
-    Papas:'assets/papas.jpg',
-    Bebidas:'assets/hero.jpg',
-    Cervezas:'assets/hero.jpg'
-  }[category] || 'assets/hero.jpg';
-}
-
-function categorySubtitle(category){
-  return {
-    Pizzas:'Elegí entera o 1/2 para sumar al carrito',
-    Panchos:'Sabores y aderezos a elección',
-    Empanadas:'Fritas o al horno',
-    Milanesas:'Pollo o carne',
-    Hamburguesas:'Todas salen con papas',
-    Papas:'Papas fritas y especiales',
-    Bebidas:'',
-    Cervezas:'Latas y botellas'
-  }[category] ?? 'Menú';
-}
+  function escapeAttribute(value){
+    return escapeHtml(value);
+  }
+})();
