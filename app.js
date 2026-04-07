@@ -48,23 +48,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   registerSW();
   startPromoCarousel();
   initHistory();
-  showSyncHint();
 });
 
 
-function showSyncHint(){
-  const info = window.getLastSyncInfo ? window.getLastSyncInfo() : null;
-  if (!info) return;
-  const el = document.getElementById('syncHint');
-  if (!el) return;
-  if (info.status === 'online') {
-    el.textContent = 'Datos sincronizados con Supabase.';
-  } else if (info.status === 'local') {
-    el.textContent = 'Falta configurar la clave de Supabase. Por ahora guarda solo en este dispositivo.';
-  } else if (info.status === 'offline') {
-    el.textContent = 'No se pudo conectar con Supabase. Se muestran datos locales.';
-  }
-}
 
 function bindEvents(){
   document.querySelectorAll('[data-screen]').forEach(btn => btn.addEventListener('click', () => {
