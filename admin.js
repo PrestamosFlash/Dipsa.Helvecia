@@ -5,8 +5,8 @@ let pendingFiles = {
   hero: ''
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  window.catalog = window.loadCatalog();
+document.addEventListener('DOMContentLoaded', async () => {
+  window.catalog = await window.loadCatalog();
   if (!guardAdminAccess()) return;
   fillGeneral();
   renderPromoEditor();
@@ -41,6 +41,8 @@ function guardAdminAccess(){
 }
 
 function fillGeneral(){
+  const syncStatus = document.querySelector('#syncStatus');
+  if (syncStatus) syncStatus.textContent = window.getLastSyncText() || (window.hasSupabaseConfig() ? 'Supabase conectado.' : 'Sin Supabase configurado.');
   $('#businessName').value = catalog.business.name || '';
   $('#businessTagline').value = catalog.business.tagline || '';
   $('#businessWhatsapp').value = catalog.business.whatsapp || '';
@@ -194,7 +196,7 @@ function renderProductEditor(){
   });
 }
 
-function saveAll(){
+async function saveAll(){
   catalog.business.name = $('#businessName').value.trim();
   catalog.business.tagline = $('#businessTagline').value.trim();
   catalog.business.whatsapp = $('#businessWhatsapp').value.trim();
@@ -230,8 +232,15 @@ function saveAll(){
     catalog.products[cat][idx].inStock = input.checked;
   });
 
-  window.saveCatalog(catalog);
-  alert('Cambios guardados. Si tenés la tienda abierta en otra pestaña, se actualiza sola; si no, abrí o recargá index.html.');
+  const result = await window.saveCatalog(catalog);
+  fillGeneral();
+  if (result.ok && result.remote) {
+    alert('Cambios guardados y sincronizados con Supabase.');
+  } else if (result.ok) {
+    alert('Cambios guardados solo en este navegador.');
+  } else {
+    alert('Se guardó localmente, pero falló la sincronización con Supabase.');
+  }
 }
 
 function applyPromoValues(type, list){

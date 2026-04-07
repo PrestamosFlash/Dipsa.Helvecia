@@ -1,5 +1,8 @@
+
 window.DIPSA_STORAGE_KEY = 'dipsaCatalogV3';
 window.DIPSA_ADMIN_AUTH_KEY = 'dipsaAdminAuthV1';
+window.DIPSA_SUPABASE_CACHE_KEY = 'dipsaSupabaseCatalogCacheV1';
+window.DIPSA_LAST_SYNC_KEY = 'dipsaLastSyncV1';
 
 window.deepClone = function(value){
   return JSON.parse(JSON.stringify(value));
@@ -27,7 +30,7 @@ window.normalizeCatalog = function(raw){
         return {
           id: item.id || `${category}-${index}`,
           name: item.name || `${category} ${index + 1}`,
-          price: hasPrice ? item.price : 0,
+          price: hasPrice ? item.price : Number(item.price || 0),
           detail: item.detail || '',
           active: item.active !== false,
           inStock: item.inStock !== false,
@@ -104,20 +107,123 @@ function inferPromoImage(name){
   return 'assets/pizza.jpg';
 }
 
-window.loadCatalog = function(){
+window.getLocalCatalog = function(){
   const saved = localStorage.getItem(window.DIPSA_STORAGE_KEY);
   const base = saved ? JSON.parse(saved) : window.DEFAULT_CATALOG;
   return window.normalizeCatalog(base);
 };
-window.saveCatalog = function(catalog){
-  localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(window.normalizeCatalog(catalog)));
+
+window.getSupabaseConfig = function(){
+  const cfg = window.DIPSA_SUPABASE || {};
+  return {
+    url: String(cfg.url || '').trim(),
+    anonKey: String(cfg.anonKey || '').trim(),
+    settingsKey: String(cfg.settingsKey || 'catalog').trim() || 'catalog'
+  };
 };
+
+window.hasSupabaseConfig = function(){
+  const cfg = window.getSupabaseConfig();
+  return Boolean(cfg.url && cfg.anonKey);
+};
+
+let supabasePromise = null;
+window.getSupabaseClient = async function(){
+  if (!window.hasSupabaseConfig()) return null;
+  if (window.supabase && typeof window.supabase.createClient === 'function') {
+    const cfg = window.getSupabaseConfig();
+    return window.supabase.createClient(cfg.url, cfg.anonKey);
+  }
+  if (!supabasePromise) {
+    supabasePromise = import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
+      .then(mod => {
+        const cfg = window.getSupabaseConfig();
+        return mod.createClient(cfg.url, cfg.anonKey);
+      })
+      .catch(err => {
+        console.warn('No se pudo cargar Supabase', err);
+        supabasePromise = null;
+        return null;
+      });
+  }
+  return supabasePromise;
+};
+
+window.getLastSyncText = function(){
+  return localStorage.getItem(window.DIPSA_LAST_SYNC_KEY) || '';
+};
+
+window.setLastSyncText = function(value){
+  if (!value) {
+    localStorage.removeItem(window.DIPSA_LAST_SYNC_KEY);
+    return;
+  }
+  localStorage.setItem(window.DIPSA_LAST_SYNC_KEY, value);
+};
+
+window.loadCatalog = async function(){
+  const localCatalog = window.getLocalCatalog();
+  if (!window.hasSupabaseConfig()) return localCatalog;
+
+  try {
+    const client = await window.getSupabaseClient();
+    if (!client) return localCatalog;
+    const cfg = window.getSupabaseConfig();
+    const { data, error } = await client
+      .from('settings')
+      .select('value')
+      .eq('key', cfg.settingsKey)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data && data.value) {
+      const remoteCatalog = window.normalizeCatalog(data.value);
+      localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(remoteCatalog));
+      localStorage.setItem(window.DIPSA_SUPABASE_CACHE_KEY, JSON.stringify(remoteCatalog));
+      window.setLastSyncText(`Sincronizado con Supabase: ${new Date().toLocaleString('es-AR')}`);
+      return remoteCatalog;
+    }
+  } catch (err) {
+    console.warn('No se pudo cargar catálogo desde Supabase, sigo con local.', err);
+  }
+
+  return localCatalog;
+};
+
+window.saveCatalog = async function(catalog){
+  const normalized = window.normalizeCatalog(catalog);
+  localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(normalized));
+  localStorage.setItem(window.DIPSA_SUPABASE_CACHE_KEY, JSON.stringify(normalized));
+
+  if (!window.hasSupabaseConfig()) {
+    window.setLastSyncText('Guardado solo en este navegador.');
+    return { ok:true, remote:false };
+  }
+
+  try {
+    const client = await window.getSupabaseClient();
+    if (!client) throw new Error('Cliente de Supabase no disponible');
+    const cfg = window.getSupabaseConfig();
+    const payload = { key: cfg.settingsKey, value: normalized };
+    const { error } = await client.from('settings').upsert(payload, { onConflict: 'key' });
+    if (error) throw error;
+    window.setLastSyncText(`Sincronizado con Supabase: ${new Date().toLocaleString('es-AR')}`);
+    return { ok:true, remote:true };
+  } catch (err) {
+    console.warn('No se pudo guardar en Supabase, quedó local.', err);
+    window.setLastSyncText('No se pudo sincronizar con Supabase. Quedó guardado localmente.');
+    return { ok:false, remote:false, error: err };
+  }
+};
+
 window.resetCatalog = function(){
   localStorage.removeItem(window.DIPSA_STORAGE_KEY);
 };
+
 window.money = function(n){
   return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(Number(n || 0));
 };
+
 window.fileToDataUrl = function(file){
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

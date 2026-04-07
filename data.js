@@ -339,3 +339,9 @@ window.DEFAULT_CATALOG = {
     }
   ]
 };
+
+window.DIPSA_SUPABASE = {
+  url: 'https://ootycpziyiplekjjjsjx.supabase.co',
+  anonKey: 'sb_publishable_mbvTCA_kAKIROXyet8NToA_MAL5mKyV',
+  settingsKey: 'catalog'
+};

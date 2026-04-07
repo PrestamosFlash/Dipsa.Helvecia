@@ -31,15 +31,15 @@ const HOME_CATEGORIES = [
   { label:'Papas', key:'Papas' }
 ];
 
-window.addEventListener('storage', () => {
-  window.catalog = window.loadCatalog();
+window.addEventListener('storage', async () => {
+  window.catalog = await window.loadCatalog();
   restoreState();
   renderAll();
   renderCart();
 });
 
-document.addEventListener('DOMContentLoaded', () => {
-  window.catalog = window.loadCatalog();
+document.addEventListener('DOMContentLoaded', async () => {
+  window.catalog = await window.loadCatalog();
   restoreState();
   bindEvents();
   renderAll();
