@@ -91,3 +91,9 @@
 .menu-banner-title{font-size:23px;line-height:1;font-weight:900;letter-spacing:.03em;color:#ffd84c;text-transform:uppercase;text-align:center;text-shadow:0 2px 8px rgba(0,0,0,.22);}
 .menu-banner-subtitle{font-size:13px;line-height:1.2;color:rgba(255,255,255,.95);font-weight:700;display:block;max-width:340px;text-align:center;}
 @media (max-width:520px){.menu-banner-title{font-size:21px}.menu-banner-subtitle{font-size:12px;max-width:260px}}
+
+.field-input:disabled{opacity:.72;cursor:not-allowed}
+#checkoutStatus[data-kind="error"]{color:#b23030;font-weight:700}
+#checkoutStatus[data-kind="success"]{color:#1b7f3b;font-weight:700}
+#checkoutStatus[data-kind="warn"]{color:#8a6500;font-weight:700}
+#checkoutStatus[data-kind="info"]{color:#5a1ea3;font-weight:700}

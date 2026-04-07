@@ -62,6 +62,7 @@ function bindAdmin(){
   $('#storeOpenBtn').addEventListener('click', () => { catalog.business.storeOpen = true; updateStoreButtons(); });
   $('#storeClosedBtn').addEventListener('click', () => { catalog.business.storeOpen = false; updateStoreButtons(); });
   $('#saveAdmin').addEventListener('click', saveAll);
+  $('#testSupabaseBtn')?.addEventListener('click', testConnection);
   $('#resetAdmin').addEventListener('click', async () => {
     window.resetCatalog();
     window.catalog = await window.loadCatalog();
@@ -121,14 +122,14 @@ function renderSyncStatus(){
   const info = window.getLastSyncInfo ? window.getLastSyncInfo() : null;
   if (ready) {
     if (info?.status === 'online') {
-      box.textContent = 'Supabase conectado y sincronizando bien. Los cambios quedan online.';
+      box.textContent = 'Supabase conectado. El catalogo ya puede quedar online.';
     } else if (info?.status === 'offline') {
-      box.textContent = 'Supabase está configurado, pero el último guardado falló. Igual quedó una copia local en este dispositivo.';
+      box.textContent = 'Supabase esta configurado, pero el ultimo guardado fallo. Revisa la URL, la clave o el SQL.';
     } else {
-      box.textContent = 'Supabase configurado. Guardá cambios para subir todo online.';
+      box.textContent = 'Supabase configurado. Guarda cambios para subir el catalogo online.';
     }
   } else {
-    box.textContent = 'Todavía falta pegar la Clave publicable de Supabase. Sin eso, el panel guarda solo en este navegador.';
+    box.textContent = 'Falta URL o clave publicable. Sin eso, el panel guarda solo en este navegador.';
   }
 }
 
@@ -299,4 +300,14 @@ function escapeHtmlAttr(value){
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+async function testConnection(){
+  catalog.supabase = catalog.supabase || {};
+  catalog.supabase.url = $('#supabaseUrl').value.trim();
+  catalog.supabase.anonKey = $('#supabaseAnonKey').value.trim();
+  catalog.supabase.enabled = true;
+  const result = await window.testSupabaseConnection(catalog);
+  renderSyncStatus();
+  alert(result.ok ? 'Conexion correcta con Supabase.' : `No se pudo conectar con Supabase.\n\n${result.message}`);
 }

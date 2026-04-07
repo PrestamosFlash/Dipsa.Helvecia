@@ -1,7 +1,6 @@
-
-window.DIPSA_STORAGE_KEY = 'dipsaCatalogV4';
+window.DIPSA_STORAGE_KEY = 'dipsaCatalogV5';
 window.DIPSA_ADMIN_AUTH_KEY = 'dipsaAdminAuthV2';
-window.DIPSA_LAST_SYNC_KEY = 'dipsaLastSyncV2';
+window.DIPSA_LAST_SYNC_KEY = 'dipsaLastSyncV3';
 
 window.deepClone = function(value){
   return JSON.parse(JSON.stringify(value));
@@ -14,6 +13,10 @@ window.slugify = function(value){
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
+};
+
+window.normalizePhone = function(value){
+  return String(value || '').replace(/\D+/g, '');
 };
 
 window.getSupabaseConfig = function(catalogOverride){
@@ -79,7 +82,7 @@ window.normalizeCatalog = function(raw){
 
   catalog.promosDaily = (catalog.promosDaily || []).map((promo, index) => ({
     id: promo.id || `daily-${index}`,
-    name: promo.name || `Promo del día ${index + 1}`,
+    name: promo.name || `Promo del dia ${index + 1}`,
     desc: promo.desc || '',
     normal: Number(promo.normal || 0),
     price: Number(promo.price || 0),
@@ -147,7 +150,7 @@ function setLastSyncInfo(status, details){
       at: new Date().toISOString()
     }));
   } catch (err) {
-    console.warn('No se pudo guardar el estado de sincronización', err);
+    console.warn('No se pudo guardar el estado de sincronizacion', err);
   }
 }
 
@@ -184,13 +187,23 @@ async function supabaseFetch(path, options = {}, catalogOverride){
   return response.text();
 }
 
-async function loadRemoteCatalog(localCatalog){
+async function supabaseRpc(name, payload, catalogOverride){
+  return supabaseFetch(`rpc/${name}`, {
+    method: 'POST',
+    body: payload || {}
+  }, catalogOverride);
+}
+
+async function loadCatalogFromMainTable(localCatalog){
+  const rows = await supabaseFetch('app_catalog?select=id,payload&id=eq.main', {}, localCatalog);
+  const remote = Array.isArray(rows) && rows[0]?.payload ? rows[0].payload : null;
+  return remote ? window.normalizeCatalog(remote) : null;
+}
+
+async function loadCatalogFromLegacyTable(localCatalog){
   const rows = await supabaseFetch('settings?select=key,value&key=eq.app_catalog', {}, localCatalog);
   const remote = Array.isArray(rows) && rows[0]?.value ? rows[0].value : null;
-  if (!remote) {
-    return localCatalog;
-  }
-  return window.normalizeCatalog(remote);
+  return remote ? window.normalizeCatalog(remote) : null;
 }
 
 window.loadCatalog = async function(){
@@ -203,11 +216,23 @@ window.loadCatalog = async function(){
   }
 
   try {
-    const remoteCatalog = await loadRemoteCatalog(localCatalog);
-    localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(remoteCatalog));
-    window.catalog = remoteCatalog;
-    setLastSyncInfo('online', 'Catálogo cargado desde Supabase');
-    return remoteCatalog;
+    let remoteCatalog = null;
+    try {
+      remoteCatalog = await loadCatalogFromMainTable(localCatalog);
+    } catch (primaryError) {
+      console.warn('Fallo app_catalog, se intenta legacy settings', primaryError);
+      try {
+        remoteCatalog = await loadCatalogFromLegacyTable(localCatalog);
+      } catch (legacyError) {
+        throw primaryError;
+      }
+    }
+
+    const finalCatalog = remoteCatalog || localCatalog;
+    localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(finalCatalog));
+    window.catalog = finalCatalog;
+    setLastSyncInfo('online', remoteCatalog ? 'Catalogo cargado desde Supabase' : 'Sin catalogo remoto, se usa copia local');
+    return finalCatalog;
   } catch (error) {
     console.warn('Fallo la carga remota, se usa copia local', error);
     window.catalog = localCatalog;
@@ -227,18 +252,46 @@ window.saveCatalog = async function(catalog){
   }
 
   try {
-    await supabaseFetch('settings?on_conflict=key', {
+    await supabaseFetch('app_catalog?on_conflict=id', {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: [{ key: 'app_catalog', value: normalized }]
+      body: [{ id: 'main', payload: normalized }]
     }, normalized);
-    setLastSyncInfo('online', 'Guardado en Supabase');
+    setLastSyncInfo('online', 'Catalogo guardado en Supabase');
     return { ok: true, mode: 'supabase' };
   } catch (error) {
     console.error('No se pudo guardar en Supabase', error);
     setLastSyncInfo('offline', String(error.message || error));
     return { ok: false, mode: 'local', error };
   }
+};
+
+window.testSupabaseConnection = async function(catalogOverride){
+  if (!window.isSupabaseReady(catalogOverride)) {
+    return { ok: false, message: 'Falta URL o clave publicable.' };
+  }
+  try {
+    await supabaseFetch('app_catalog?select=id&id=eq.main', {}, catalogOverride);
+    return { ok: true, message: 'Conexion correcta con Supabase.' };
+  } catch (error) {
+    return { ok: false, message: String(error.message || error) };
+  }
+};
+
+window.lookupCustomerByPhone = async function(phone, catalogOverride){
+  const digits = window.normalizePhone(phone);
+  if (!digits) return { found: false };
+  const result = await supabaseRpc('find_customer_by_phone', { p_phone: digits }, catalogOverride);
+  if (result && typeof result === 'object') return result;
+  return { found: false };
+};
+
+window.createCheckoutOrder = async function(payload, catalogOverride){
+  const result = await supabaseRpc('create_checkout_order', { p_payload: payload }, catalogOverride);
+  if (!result || result.ok === false) {
+    throw new Error(result?.message || 'No se pudo registrar el pedido.');
+  }
+  return result;
 };
 
 window.resetCatalog = function(){

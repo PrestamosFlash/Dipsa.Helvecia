@@ -1,6 +1,8 @@
 let installPrompt = null;
 let carouselInterval = null;
-const STORAGE_KEY = 'dipsa_storefront_state_v3';
+let customerRecord = null;
+let customerLookupToken = 0;
+const STORAGE_KEY = 'dipsa_storefront_state_v4';
 const DEFAULT_CUSTOMER = {
   name:'',
   phone:'',
@@ -36,6 +38,8 @@ window.addEventListener('storage', async () => {
   restoreState();
   renderAll();
   renderCart();
+  syncFormFromState();
+  await hydrateCustomerFromPhone(state.customer.phone, { silent:true });
 });
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -45,6 +49,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAll();
   renderCart();
   syncFormFromState();
+  await hydrateCustomerFromPhone(state.customer.phone, { silent:true });
   registerSW();
   startPromoCarousel();
   initHistory();
@@ -97,6 +102,20 @@ function bindEvents(){
   bindCustomerField('#customerNotes', 'notes');
   bindCustomerField('#customerBirthdate', 'birthdate');
 
+  const phoneField = $('#customerPhone');
+  if (phoneField) {
+    phoneField.addEventListener('blur', () => hydrateCustomerFromPhone(phoneField.value));
+    phoneField.addEventListener('change', () => hydrateCustomerFromPhone(phoneField.value));
+  }
+  const birthField = $('#customerBirthdate');
+  if (birthField) {
+    birthField.addEventListener('change', () => {
+      renderCart();
+      renderBirthdayGreeting();
+      persistState();
+    });
+  }
+
   updateToggles();
   setPromoTab(state.promoTab);
 }
@@ -106,10 +125,18 @@ function bindCustomerField(selector, key){
   if (!field) return;
   field.addEventListener('input', () => {
     state.customer[key] = field.value;
+    if (key === 'birthdate') {
+      renderCart();
+      renderBirthdayGreeting();
+    }
     persistState();
   });
   field.addEventListener('change', () => {
     state.customer[key] = field.value;
+    if (key === 'birthdate') {
+      renderCart();
+      renderBirthdayGreeting();
+    }
     persistState();
   });
 }
@@ -155,7 +182,9 @@ function syncFormFromState(){
   $('#customerNotes').value = state.customer.notes || '';
   const birth = $('#customerBirthdate');
   if (birth) birth.value = state.customer.birthdate || '';
-  state.birthday = isBirthdayToday(state.customer.birthdate);
+  applyBirthdateFieldState();
+  state.birthday = isBirthdayToday(getEffectiveBirthdate());
+  renderBirthdayGreeting();
 }
 
 function initHistory(){
@@ -191,6 +220,126 @@ function updateBrand(){
 
 function updateStoreStatus(){
   $('#storeStatus').textContent = catalog.business.storeOpen === false ? 'Cerrado' : 'Abierto ahora';
+}
+
+function setCheckoutStatus(message, kind = 'info'){
+  const box = $('#checkoutStatus');
+  if (!box) return;
+  if (!message) {
+    box.textContent = '';
+    box.classList.add('hidden-block');
+    return;
+  }
+  box.textContent = message;
+  box.dataset.kind = kind;
+  box.classList.remove('hidden-block');
+}
+
+function setCustomerLookupMessage(message){
+  const box = $('#customerLookupMessage');
+  if (!box) return;
+  if (!message) {
+    box.textContent = '';
+    box.classList.add('hidden-block');
+    return;
+  }
+  box.textContent = message;
+  box.classList.remove('hidden-block');
+}
+
+function getEffectiveBirthdate(){
+  return customerRecord?.birthdate || state.customer.birthdate || '';
+}
+
+function applyBirthdateFieldState(){
+  const birth = $('#customerBirthdate');
+  const hint = $('#birthdateHint');
+  if (!birth) return;
+  const locked = Boolean(customerRecord?.birthdate);
+  birth.disabled = locked;
+  birth.readOnly = locked;
+  if (hint) {
+    if (locked) {
+      hint.textContent = 'La fecha de nacimiento ya quedó registrada y no se puede volver a editar.';
+      hint.classList.remove('hidden-block');
+    } else {
+      hint.textContent = 'La fecha se guarda al enviar el primer pedido y después queda bloqueada.';
+      hint.classList.remove('hidden-block');
+    }
+  }
+}
+
+function renderBirthdayGreeting(){
+  const name = customerRecord?.full_name || state.customer.name || '';
+  const shouldShow = Boolean(name && isBirthdayToday(getEffectiveBirthdate()));
+  ['#birthdayGreetingHome', '#birthdayGreetingCheckout'].forEach(selector => {
+    const box = $(selector);
+    if (!box) return;
+    if (!shouldShow) {
+      box.innerHTML = '';
+      box.classList.add('hidden-block');
+      return;
+    }
+    box.innerHTML = `<strong>Feliz cumpleaños, ${name} 🎉</strong><div style="margin-top:6px">Hoy tenés 20% OFF automático en tu compra.</div>`;
+    box.classList.remove('hidden-block');
+  });
+}
+
+function applyCustomerRecord(record, options = {}){
+  customerRecord = record ? { ...record } : null;
+  if (record) {
+    state.customer.name = record.full_name || state.customer.name;
+    if (!options.keepCurrentPhone) state.customer.phone = record.phone || state.customer.phone;
+    state.customer.address = record.address || state.customer.address;
+    state.customer.zone = record.zone || state.customer.zone;
+    state.customer.birthdate = record.birthdate || state.customer.birthdate;
+    setCustomerLookupMessage(record.birthdate ? `Cliente reconocido. Fecha de nacimiento bloqueada para ${record.full_name}.` : `Cliente reconocido. Podés completar la fecha de nacimiento una sola vez.`);
+  } else {
+    customerRecord = null;
+    setCustomerLookupMessage(state.customer.phone ? 'Cliente nuevo. Completá la fecha de nacimiento solo una vez.' : '');
+  }
+  syncFormFromState();
+  renderCart();
+  persistState();
+}
+
+async function hydrateCustomerFromPhone(phone, { silent = false } = {}){
+  const digits = window.normalizePhone(phone);
+  const previousRecord = customerRecord ? { ...customerRecord } : null;
+  const previousPhone = window.normalizePhone(previousRecord?.phone || '');
+  const currentToken = ++customerLookupToken;
+  if (!digits || digits.length < 8) {
+    if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
+    customerRecord = null;
+    syncFormFromState();
+    if (!silent) setCustomerLookupMessage('');
+    return;
+  }
+  if (!window.isSupabaseReady(catalog)) {
+    if (!silent) setCustomerLookupMessage('Supabase no está listo todavía.');
+    customerRecord = null;
+    syncFormFromState();
+    return;
+  }
+  if (!silent) setCustomerLookupMessage('Buscando tu registro...');
+  try {
+    const result = await window.lookupCustomerByPhone(digits, catalog);
+    if (currentToken !== customerLookupToken) return;
+    if (result?.found && result.customer) {
+      applyCustomerRecord(result.customer, { keepCurrentPhone:false });
+    } else {
+      if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
+      customerRecord = null;
+      syncFormFromState();
+      if (!silent) setCustomerLookupMessage('Cliente nuevo. Completá tus datos y tu fecha de nacimiento una sola vez.');
+    }
+  } catch (error) {
+    console.warn('No se pudo buscar el cliente', error);
+    if (previousPhone && previousPhone !== digits) state.customer.birthdate = '';
+    customerRecord = null;
+    syncFormFromState();
+    if (!silent) setCustomerLookupMessage('No se pudo verificar el cliente ahora, pero podés continuar.');
+  }
 }
 
 function switchScreen(screen, options = {}){
@@ -600,7 +749,7 @@ function renderCart(){
   });
   const subtotal = state.cart.reduce((a,b) => a + b.price, 0);
   const delivery = state.delivery ? catalog.business.deliveryFee : 0;
-  state.birthday = isBirthdayToday(state.customer.birthdate);
+  state.birthday = isBirthdayToday(getEffectiveBirthdate());
   const birthday = state.birthday ? Math.round(subtotal * 0.2) : 0;
   const total = subtotal + delivery - birthday;
   $('#subtotal').textContent = money(subtotal);
@@ -609,7 +758,7 @@ function renderCart(){
   $('#total').textContent = money(total);
 }
 
-function sendWhatsApp(){
+async function sendWhatsApp(){
   const customer = collectCustomerData();
   if (!state.cart.length) {
     alert('Agregá al menos un producto antes de enviar el pedido.');
@@ -630,15 +779,53 @@ function sendWhatsApp(){
     $('#customerAddress').focus();
     return;
   }
+
   const subtotal = state.cart.reduce((a,b) => a + b.price, 0);
   const delivery = state.delivery ? catalog.business.deliveryFee : 0;
-  state.birthday = isBirthdayToday(state.customer.birthdate);
-  const birthday = state.birthday ? Math.round(subtotal * 0.2) : 0;
-  const total = subtotal + delivery - birthday;
+  state.birthday = isBirthdayToday(getEffectiveBirthdate());
+  let birthday = state.birthday ? Math.round(subtotal * 0.2) : 0;
+  let total = subtotal + delivery - birthday;
+  let orderCode = '';
+
+  if (window.isSupabaseReady(catalog)) {
+    setCheckoutStatus('Guardando cliente y pedido...', 'info');
+    try {
+      const checkout = await window.createCheckoutOrder({
+        name: customer.name,
+        phone: customer.phone,
+        address: state.delivery ? customer.address : '',
+        zone: customer.zone || '',
+        payment: customer.payment || '',
+        notes: customer.notes || '',
+        birthdate: customer.birthdate || '',
+        delivery: state.delivery,
+        items: state.cart,
+        subtotal,
+        delivery_fee: delivery
+      }, catalog);
+      if (checkout.customer) applyCustomerRecord(checkout.customer, { silent:false, keepCurrentPhone:true });
+      birthday = Number(checkout.order?.birthday_discount || birthday || 0);
+      total = Number(checkout.order?.total || total || 0);
+      orderCode = checkout.order?.order_code || '';
+      state.birthday = birthday > 0;
+      renderCart();
+      setCheckoutStatus(orderCode ? `Pedido ${orderCode} guardado. Ahora se abre WhatsApp.` : 'Pedido guardado. Ahora se abre WhatsApp.', 'success');
+    } catch (error) {
+      console.error('No se pudo registrar el checkout', error);
+      setCheckoutStatus('No se pudo guardar el pedido en Supabase.', 'error');
+      alert('No se pudo guardar el cliente o el pedido en Supabase. Revisá el SQL, la URL y la clave antes de seguir.');
+      return;
+    }
+  } else {
+    setCheckoutStatus('Supabase no está configurado. El pedido saldrá por WhatsApp pero no quedará registrado.', 'warn');
+  }
+
   const items = state.cart.map(i => `- ${i.name}${i.note ? ` (${i.note})` : ''} — ${money(i.price)}`).join('\n');
   const msg = [
     `Hola ${catalog.business.name || 'Dipsa'}, quiero hacer este pedido:`,
     '',
+    orderCode ? `Codigo del pedido: ${orderCode}` : '',
+    orderCode ? '' : '',
     items,
     '',
     `Modalidad: ${state.delivery ? 'Delivery' : 'Retiro'}`,
@@ -652,9 +839,9 @@ function sendWhatsApp(){
     `Zona: ${customer.zone || '-'}`,
     `Dirección: ${state.delivery ? (customer.address || '-') : 'Retira en el local'}`,
     `Pago: ${customer.payment || '-'}`,
-    `Fecha de nacimiento: ${customer.birthdate || '-'}`,
+    `Fecha de nacimiento: ${getEffectiveBirthdate() || '-'}`,
     `Observaciones: ${customer.notes || '-'}`
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   persistState();
   window.open(`https://wa.me/${catalog.business.whatsapp}?text=${encodeURIComponent(msg)}`, '_blank');
 }
@@ -677,7 +864,7 @@ function collectCustomerData(){
     zone: $('#customerZone')?.value || '',
     payment: $('#customerPayment')?.value || '',
     notes: $('#customerNotes')?.value?.trim() || '',
-    birthdate: $('#customerBirthdate')?.value || ''
+    birthdate: customerRecord?.birthdate || $('#customerBirthdate')?.value || ''
   };
   persistState();
   return state.customer;

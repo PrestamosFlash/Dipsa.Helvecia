@@ -1,8 +1,8 @@
 window.DIPSA_SUPABASE_CONFIG = {
   enabled: true,
-  url: 'https://ootycpziyiplekjjjsjx.supabase.co',
+  url: 'https://ootycpziyiplekjijsjx.supabase.co',
   anonKey: 'sb_publishable_mbvTCA_kAKIROXyet8NToA_MAL5mKyV',
-  notes: 'Completá la anon/public key para activar el guardado online.'
+  notes: 'Configuracion base de Supabase para catalogo, clientes y pedidos.'
 };
 
 window.DEFAULT_CATALOG = {
@@ -22,7 +22,7 @@ window.DEFAULT_CATALOG = {
   },
   "supabase": {
     "enabled": true,
-    "url": "https://ootycpziyiplekjjjsjx.supabase.co",
+    "url": "https://ootycpziyiplekjijsjx.supabase.co",
     "anonKey": "sb_publishable_mbvTCA_kAKIROXyet8NToA_MAL5mKyV"
   },
   "categories": [
