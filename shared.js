@@ -1,4 +1,5 @@
 window.DIPSA_STORAGE_KEY = 'dipsaCatalogV3';
+window.DIPSA_ADMIN_AUTH_KEY = 'dipsaAdminAuthV1';
 
 window.deepClone = function(value){
   return JSON.parse(JSON.stringify(value));
@@ -20,20 +21,22 @@ window.normalizeCatalog = function(raw){
   catalog.categories = Array.isArray(catalog.categories) ? catalog.categories : [];
   catalog.products = catalog.products || {};
   Object.entries(catalog.products).forEach(([category, items]) => {
-    catalog.products[category] = (items || []).map((item, index) => {
-      const hasPrice = typeof item.price === 'number' && item.price >= 0;
-      return {
-        id: item.id || `${category}-${index}`,
-        name: item.name || `${category} ${index + 1}`,
-        price: hasPrice ? item.price : 0,
-        detail: item.detail || '',
-        active: item.active !== false,
-        inStock: item.inStock !== false,
-        image: item.image || '',
-        allowHalf: item.allowHalf === true,
-        options: Array.isArray(item.options) ? item.options : []
-      };
-    });
+    catalog.products[category] = (items || [])
+      .map((item, index) => {
+        const hasPrice = typeof item.price === 'number' && item.price >= 0;
+        return {
+          id: item.id || `${category}-${index}`,
+          name: item.name || `${category} ${index + 1}`,
+          price: hasPrice ? item.price : 0,
+          detail: item.detail || '',
+          active: item.active !== false,
+          inStock: item.inStock !== false,
+          image: item.image || '',
+          allowHalf: item.allowHalf === true,
+          options: Array.isArray(item.options) ? item.options : []
+        };
+      })
+      .filter(item => shouldKeepProduct(category, item));
   });
 
   catalog.promosDaily = (catalog.promosDaily || []).map((promo, index) => ({
@@ -77,6 +80,19 @@ window.normalizeCatalog = function(raw){
 
   return catalog;
 };
+
+function shouldKeepProduct(category, item){
+  const name = String(item?.name || '').trim();
+  const detail = String(item?.detail || '').trim();
+  if (!name) return false;
+
+  if (category === 'Empanadas') {
+    if (/^sabores?$/i.test(name) && Number(item.price || 0) === 0) return false;
+    if (/^sabores?:/i.test(detail) && /^sabores?$/i.test(name)) return false;
+  }
+
+  return true;
+}
 
 function inferPromoImage(name){
   const text = String(name || '').toLowerCase();

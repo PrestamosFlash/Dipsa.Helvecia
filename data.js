@@ -8,6 +8,9 @@ window.DEFAULT_CATALOG = {
     "logo": "assets/logo.jpg",
     "heroImage": "assets/hero.jpg"
   },
+  "admin": {
+    "password": ""
+  },
   "categories": [
     "Promos",
     "Pizzas",

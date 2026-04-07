@@ -7,6 +7,7 @@ let pendingFiles = {
 
 document.addEventListener('DOMContentLoaded', () => {
   window.catalog = window.loadCatalog();
+  if (!guardAdminAccess()) return;
   fillGeneral();
   renderPromoEditor();
   renderGeneralPromoEditor();
@@ -14,6 +15,30 @@ document.addEventListener('DOMContentLoaded', () => {
   bindAdmin();
   updateStoreButtons();
 });
+
+function guardAdminAccess(){
+  const password = String(catalog.admin?.password || '').trim();
+  if (!password) return true;
+
+  const cached = sessionStorage.getItem(window.DIPSA_ADMIN_AUTH_KEY);
+  if (cached === password) return true;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const entered = window.prompt('Ingresá la contraseña del panel admin:');
+    if (entered === null) {
+      window.location.href = 'index.html';
+      return false;
+    }
+    if (entered === password) {
+      sessionStorage.setItem(window.DIPSA_ADMIN_AUTH_KEY, password);
+      return true;
+    }
+    alert('Contraseña incorrecta.');
+  }
+
+  window.location.href = 'index.html';
+  return false;
+}
 
 function fillGeneral(){
   $('#businessName').value = catalog.business.name || '';
@@ -24,6 +49,7 @@ function fillGeneral(){
   $('#deliveryFee').value = catalog.business.deliveryFee || 0;
   $('#logoUrl').value = catalog.business.logo || '';
   $('#heroUrl').value = catalog.business.heroImage || '';
+  $('#adminPassword').value = catalog.admin?.password || '';
 }
 
 function bindAdmin(){
@@ -177,6 +203,8 @@ function saveAll(){
   catalog.business.deliveryFee = Number($('#deliveryFee').value || 0);
   catalog.business.logo = $('#logoUrl').value.trim() || 'assets/logo.jpg';
   catalog.business.heroImage = $('#heroUrl').value.trim() || 'assets/hero.jpg';
+  catalog.admin = catalog.admin || {};
+  catalog.admin.password = $('#adminPassword').value.trim();
 
   applyPromoValues('daily', catalog.promosDaily);
   applyPromoValues('general', catalog.promosGeneral);

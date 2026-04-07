@@ -296,7 +296,7 @@ function renderMenu(){
 
   const categoriesToRender = state.menuFilter === 'all' ? MENU_ORDER : [state.menuFilter];
   categoriesToRender.forEach(category => {
-    const items = (catalog.products[category] || []);
+    const items = (catalog.products[category] || []).filter(item => item.active !== false);
     if (!items.length) return;
     const wrap = document.createElement('section');
     wrap.className = 'menu-section';
