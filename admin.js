@@ -5,8 +5,11 @@ let pendingFiles = {
   hero: ''
 };
 
+let catalog = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   window.catalog = await window.loadCatalog();
+  catalog = window.catalog;
   if (!guardAdminAccess()) return;
   fillGeneral();
   renderPromoEditor();
@@ -14,6 +17,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderProductEditor();
   bindAdmin();
   updateStoreButtons();
+  renderSyncStatus();
 });
 
 function guardAdminAccess(){
@@ -41,8 +45,6 @@ function guardAdminAccess(){
 }
 
 function fillGeneral(){
-  const syncStatus = document.querySelector('#syncStatus');
-  if (syncStatus) syncStatus.textContent = window.getLastSyncText() || (window.hasSupabaseConfig() ? 'Supabase conectado.' : 'Sin Supabase configurado.');
   $('#businessName').value = catalog.business.name || '';
   $('#businessTagline').value = catalog.business.tagline || '';
   $('#businessWhatsapp').value = catalog.business.whatsapp || '';
@@ -52,22 +54,26 @@ function fillGeneral(){
   $('#logoUrl').value = catalog.business.logo || '';
   $('#heroUrl').value = catalog.business.heroImage || '';
   $('#adminPassword').value = catalog.admin?.password || '';
+  $('#supabaseUrl').value = catalog.supabase?.url || window.DIPSA_SUPABASE_CONFIG?.url || '';
+  $('#supabaseAnonKey').value = catalog.supabase?.anonKey || window.DIPSA_SUPABASE_CONFIG?.anonKey || '';
 }
 
 function bindAdmin(){
   $('#storeOpenBtn').addEventListener('click', () => { catalog.business.storeOpen = true; updateStoreButtons(); });
   $('#storeClosedBtn').addEventListener('click', () => { catalog.business.storeOpen = false; updateStoreButtons(); });
   $('#saveAdmin').addEventListener('click', saveAll);
-  $('#resetAdmin').addEventListener('click', () => {
+  $('#resetAdmin').addEventListener('click', async () => {
     window.resetCatalog();
-    window.catalog = window.loadCatalog();
+    window.catalog = await window.loadCatalog();
+    catalog = window.catalog;
     pendingFiles = { logo:'', hero:'' };
     fillGeneral();
     renderPromoEditor();
     renderGeneralPromoEditor();
     renderProductEditor();
     updateStoreButtons();
-    alert('Se restauró la base.');
+    renderSyncStatus();
+    alert('Se restauró la base local. Si querés subirla de nuevo, tocá Guardar cambios.');
   });
   $('#addDailyPromo').addEventListener('click', () => {
     catalog.promosDaily.push(createEmptyPromo('daily', catalog.promosDaily.length + 1));
@@ -106,6 +112,24 @@ function createEmptyPromo(type, count){
 function updateStoreButtons(){
   $('#storeOpenBtn').classList.toggle('active', catalog.business.storeOpen !== false);
   $('#storeClosedBtn').classList.toggle('active', catalog.business.storeOpen === false);
+}
+
+function renderSyncStatus(){
+  const box = $('#syncStatus');
+  if (!box) return;
+  const ready = window.isSupabaseReady(catalog);
+  const info = window.getLastSyncInfo ? window.getLastSyncInfo() : null;
+  if (ready) {
+    if (info?.status === 'online') {
+      box.textContent = 'Supabase conectado y sincronizando bien. Los cambios quedan online.';
+    } else if (info?.status === 'offline') {
+      box.textContent = 'Supabase está configurado, pero el último guardado falló. Igual quedó una copia local en este dispositivo.';
+    } else {
+      box.textContent = 'Supabase configurado. Guardá cambios para subir todo online.';
+    }
+  } else {
+    box.textContent = 'Todavía falta pegar la Clave publicable de Supabase. Sin eso, el panel guarda solo en este navegador.';
+  }
 }
 
 function renderPromoEditor(){
@@ -150,8 +174,8 @@ function renderGeneralPromoEditor(){
 
 function bindPromoControls(){
   document.querySelectorAll('[data-kind="promo-file"]').forEach(input => {
-    input.onchange = async (e) => {
-      const file = e.target.files?.[0];
+    input.onchange = async () => {
+      const file = input.files?.[0];
       if (!file) return;
       const value = await window.fileToDataUrl(file);
       const type = input.dataset.promoType;
@@ -207,6 +231,10 @@ async function saveAll(){
   catalog.business.heroImage = $('#heroUrl').value.trim() || 'assets/hero.jpg';
   catalog.admin = catalog.admin || {};
   catalog.admin.password = $('#adminPassword').value.trim();
+  catalog.supabase = catalog.supabase || {};
+  catalog.supabase.url = $('#supabaseUrl').value.trim();
+  catalog.supabase.anonKey = $('#supabaseAnonKey').value.trim();
+  catalog.supabase.enabled = true;
 
   applyPromoValues('daily', catalog.promosDaily);
   applyPromoValues('general', catalog.promosGeneral);
@@ -233,13 +261,14 @@ async function saveAll(){
   });
 
   const result = await window.saveCatalog(catalog);
-  fillGeneral();
-  if (result.ok && result.remote) {
-    alert('Cambios guardados y sincronizados con Supabase.');
+  renderSyncStatus();
+
+  if (result.ok && result.mode === 'supabase') {
+    alert('Cambios guardados en Supabase. Se van a ver en todos los dispositivos.');
   } else if (result.ok) {
-    alert('Cambios guardados solo en este navegador.');
+    alert('Cambios guardados solo en este navegador. Pegá la clave publicable para que quede online.');
   } else {
-    alert('Se guardó localmente, pero falló la sincronización con Supabase.');
+    alert('Se guardó copia local, pero falló la sincronización con Supabase. Revisá URL, clave publicable y políticas.');
   }
 }
 

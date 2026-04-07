@@ -1,16 +1,41 @@
 
-window.DIPSA_STORAGE_KEY = 'dipsaCatalogV3';
-window.DIPSA_ADMIN_AUTH_KEY = 'dipsaAdminAuthV1';
-window.DIPSA_SUPABASE_CACHE_KEY = 'dipsaSupabaseCatalogCacheV1';
-window.DIPSA_LAST_SYNC_KEY = 'dipsaLastSyncV1';
+window.DIPSA_STORAGE_KEY = 'dipsaCatalogV4';
+window.DIPSA_ADMIN_AUTH_KEY = 'dipsaAdminAuthV2';
+window.DIPSA_LAST_SYNC_KEY = 'dipsaLastSyncV2';
 
 window.deepClone = function(value){
   return JSON.parse(JSON.stringify(value));
 };
 
+window.slugify = function(value){
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+};
+
+window.getSupabaseConfig = function(catalogOverride){
+  const localCatalog = catalogOverride || window.DEFAULT_CATALOG || {};
+  const defaultConfig = window.DIPSA_SUPABASE_CONFIG || {};
+  return {
+    enabled: localCatalog.supabase?.enabled !== false && defaultConfig.enabled !== false,
+    url: String(localCatalog.supabase?.url || defaultConfig.url || '').trim().replace(/\/$/, ''),
+    anonKey: String(localCatalog.supabase?.anonKey || defaultConfig.anonKey || '').trim()
+  };
+};
+
+window.isSupabaseReady = function(catalogOverride){
+  const cfg = window.getSupabaseConfig(catalogOverride);
+  return Boolean(cfg.enabled && cfg.url && cfg.anonKey);
+};
+
 window.normalizeCatalog = function(raw){
-  const catalog = window.deepClone(raw || window.DEFAULT_CATALOG || {});
-  catalog.business = catalog.business || {};
+  const defaults = window.deepClone(window.DEFAULT_CATALOG || {});
+  const catalog = window.deepClone(raw || defaults || {});
+
+  catalog.business = { ...(defaults.business || {}), ...(catalog.business || {}) };
   catalog.business.name = catalog.business.name || 'Dipsa';
   catalog.business.tagline = catalog.business.tagline || 'Pizzas, birras y combos al toque';
   catalog.business.whatsapp = catalog.business.whatsapp || '5493405490506';
@@ -21,25 +46,35 @@ window.normalizeCatalog = function(raw){
   catalog.business.phoneDisplay = catalog.business.phoneDisplay || '+54 9 3405 49-0506';
   catalog.business.deliveryMessage = catalog.business.deliveryMessage || 'Delivery y pedidos por WhatsApp';
 
-  catalog.categories = Array.isArray(catalog.categories) ? catalog.categories : [];
+  catalog.admin = { ...(defaults.admin || {}), ...(catalog.admin || {}) };
+  catalog.admin.password = String(catalog.admin.password || '');
+
+  catalog.supabase = {
+    ...(defaults.supabase || {}),
+    ...(catalog.supabase || {}),
+    url: String(catalog.supabase?.url || defaults.supabase?.url || '').trim().replace(/\/$/, ''),
+    anonKey: String(catalog.supabase?.anonKey || defaults.supabase?.anonKey || '').trim(),
+    enabled: catalog.supabase?.enabled !== false
+  };
+
+  catalog.categories = Array.isArray(catalog.categories) ? catalog.categories : (defaults.categories || []);
   catalog.products = catalog.products || {};
+
   Object.entries(catalog.products).forEach(([category, items]) => {
-    catalog.products[category] = (items || [])
-      .map((item, index) => {
-        const hasPrice = typeof item.price === 'number' && item.price >= 0;
-        return {
-          id: item.id || `${category}-${index}`,
-          name: item.name || `${category} ${index + 1}`,
-          price: hasPrice ? item.price : Number(item.price || 0),
-          detail: item.detail || '',
-          active: item.active !== false,
-          inStock: item.inStock !== false,
-          image: item.image || '',
-          allowHalf: item.allowHalf === true,
-          options: Array.isArray(item.options) ? item.options : []
-        };
-      })
-      .filter(item => shouldKeepProduct(category, item));
+    catalog.products[category] = (items || []).map((item, index) => {
+      const hasPrice = typeof item.price === 'number' || typeof item.price === 'string';
+      return {
+        id: item.id || `${category}-${index}`,
+        name: item.name || `${category} ${index + 1}`,
+        price: hasPrice ? Number(item.price || 0) : 0,
+        detail: item.detail || '',
+        active: item.active !== false,
+        inStock: item.inStock !== false,
+        image: item.image || '',
+        allowHalf: item.allowHalf === true,
+        options: Array.isArray(item.options) ? item.options : []
+      };
+    }).filter(item => shouldKeepProduct(category, item));
   });
 
   catalog.promosDaily = (catalog.promosDaily || []).map((promo, index) => ({
@@ -62,11 +97,10 @@ window.normalizeCatalog = function(raw){
     active: promo.active !== false
   }));
 
+  catalog.panchos = { ...(defaults.panchos || {}), ...(catalog.panchos || {}) };
+
   if (catalog.products.Pizzas) {
-    catalog.products.Pizzas = catalog.products.Pizzas.map(item => ({
-      ...item,
-      allowHalf: true
-    }));
+    catalog.products.Pizzas = catalog.products.Pizzas.map(item => ({ ...item, allowHalf: true }));
   }
 
   if (catalog.products.Panchos) {
@@ -88,12 +122,10 @@ function shouldKeepProduct(category, item){
   const name = String(item?.name || '').trim();
   const detail = String(item?.detail || '').trim();
   if (!name) return false;
-
   if (category === 'Empanadas') {
     if (/^sabores?$/i.test(name) && Number(item.price || 0) === 0) return false;
     if (/^sabores?:/i.test(detail) && /^sabores?$/i.test(name)) return false;
   }
-
   return true;
 }
 
@@ -107,112 +139,105 @@ function inferPromoImage(name){
   return 'assets/pizza.jpg';
 }
 
-window.getLocalCatalog = function(){
-  const saved = localStorage.getItem(window.DIPSA_STORAGE_KEY);
-  const base = saved ? JSON.parse(saved) : window.DEFAULT_CATALOG;
-  return window.normalizeCatalog(base);
-};
-
-window.getSupabaseConfig = function(){
-  const cfg = window.DIPSA_SUPABASE || {};
-  return {
-    url: String(cfg.url || '').trim(),
-    anonKey: String(cfg.anonKey || '').trim(),
-    settingsKey: String(cfg.settingsKey || 'catalog').trim() || 'catalog'
-  };
-};
-
-window.hasSupabaseConfig = function(){
-  const cfg = window.getSupabaseConfig();
-  return Boolean(cfg.url && cfg.anonKey);
-};
-
-let supabasePromise = null;
-window.getSupabaseClient = async function(){
-  if (!window.hasSupabaseConfig()) return null;
-  if (window.supabase && typeof window.supabase.createClient === 'function') {
-    const cfg = window.getSupabaseConfig();
-    return window.supabase.createClient(cfg.url, cfg.anonKey);
+function setLastSyncInfo(status, details){
+  try {
+    localStorage.setItem(window.DIPSA_LAST_SYNC_KEY, JSON.stringify({
+      status,
+      details: details || '',
+      at: new Date().toISOString()
+    }));
+  } catch (err) {
+    console.warn('No se pudo guardar el estado de sincronización', err);
   }
-  if (!supabasePromise) {
-    supabasePromise = import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')
-      .then(mod => {
-        const cfg = window.getSupabaseConfig();
-        return mod.createClient(cfg.url, cfg.anonKey);
-      })
-      .catch(err => {
-        console.warn('No se pudo cargar Supabase', err);
-        supabasePromise = null;
-        return null;
-      });
+}
+
+window.getLastSyncInfo = function(){
+  try {
+    const raw = localStorage.getItem(window.DIPSA_LAST_SYNC_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    return null;
   }
-  return supabasePromise;
 };
 
-window.getLastSyncText = function(){
-  return localStorage.getItem(window.DIPSA_LAST_SYNC_KEY) || '';
-};
+async function supabaseFetch(path, options = {}, catalogOverride){
+  const cfg = window.getSupabaseConfig(catalogOverride);
+  const response = await fetch(`${cfg.url}/rest/v1/${path}`, {
+    method: options.method || 'GET',
+    headers: {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.anonKey}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store'
+  });
 
-window.setLastSyncText = function(value){
-  if (!value) {
-    localStorage.removeItem(window.DIPSA_LAST_SYNC_KEY);
-    return;
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Supabase ${response.status}`);
   }
-  localStorage.setItem(window.DIPSA_LAST_SYNC_KEY, value);
-};
+
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) return response.json();
+  return response.text();
+}
+
+async function loadRemoteCatalog(localCatalog){
+  const rows = await supabaseFetch('settings?select=key,value&key=eq.app_catalog', {}, localCatalog);
+  const remote = Array.isArray(rows) && rows[0]?.value ? rows[0].value : null;
+  if (!remote) {
+    return localCatalog;
+  }
+  return window.normalizeCatalog(remote);
+}
 
 window.loadCatalog = async function(){
-  const localCatalog = window.getLocalCatalog();
-  if (!window.hasSupabaseConfig()) return localCatalog;
+  const saved = localStorage.getItem(window.DIPSA_STORAGE_KEY);
+  const localCatalog = window.normalizeCatalog(saved ? JSON.parse(saved) : window.DEFAULT_CATALOG);
 
-  try {
-    const client = await window.getSupabaseClient();
-    if (!client) return localCatalog;
-    const cfg = window.getSupabaseConfig();
-    const { data, error } = await client
-      .from('settings')
-      .select('value')
-      .eq('key', cfg.settingsKey)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (data && data.value) {
-      const remoteCatalog = window.normalizeCatalog(data.value);
-      localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(remoteCatalog));
-      localStorage.setItem(window.DIPSA_SUPABASE_CACHE_KEY, JSON.stringify(remoteCatalog));
-      window.setLastSyncText(`Sincronizado con Supabase: ${new Date().toLocaleString('es-AR')}`);
-      return remoteCatalog;
-    }
-  } catch (err) {
-    console.warn('No se pudo cargar catálogo desde Supabase, sigo con local.', err);
+  if (!window.isSupabaseReady(localCatalog)) {
+    window.catalog = localCatalog;
+    return localCatalog;
   }
 
-  return localCatalog;
+  try {
+    const remoteCatalog = await loadRemoteCatalog(localCatalog);
+    localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(remoteCatalog));
+    window.catalog = remoteCatalog;
+    setLastSyncInfo('online', 'Catálogo cargado desde Supabase');
+    return remoteCatalog;
+  } catch (error) {
+    console.warn('Fallo la carga remota, se usa copia local', error);
+    window.catalog = localCatalog;
+    setLastSyncInfo('offline', String(error.message || error));
+    return localCatalog;
+  }
 };
 
 window.saveCatalog = async function(catalog){
   const normalized = window.normalizeCatalog(catalog);
   localStorage.setItem(window.DIPSA_STORAGE_KEY, JSON.stringify(normalized));
-  localStorage.setItem(window.DIPSA_SUPABASE_CACHE_KEY, JSON.stringify(normalized));
+  window.catalog = normalized;
 
-  if (!window.hasSupabaseConfig()) {
-    window.setLastSyncText('Guardado solo en este navegador.');
-    return { ok:true, remote:false };
+  if (!window.isSupabaseReady(normalized)) {
+    setLastSyncInfo('local', 'Guardado solo en este navegador');
+    return { ok: true, mode: 'local' };
   }
 
   try {
-    const client = await window.getSupabaseClient();
-    if (!client) throw new Error('Cliente de Supabase no disponible');
-    const cfg = window.getSupabaseConfig();
-    const payload = { key: cfg.settingsKey, value: normalized };
-    const { error } = await client.from('settings').upsert(payload, { onConflict: 'key' });
-    if (error) throw error;
-    window.setLastSyncText(`Sincronizado con Supabase: ${new Date().toLocaleString('es-AR')}`);
-    return { ok:true, remote:true };
-  } catch (err) {
-    console.warn('No se pudo guardar en Supabase, quedó local.', err);
-    window.setLastSyncText('No se pudo sincronizar con Supabase. Quedó guardado localmente.');
-    return { ok:false, remote:false, error: err };
+    await supabaseFetch('settings?on_conflict=key', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: [{ key: 'app_catalog', value: normalized }]
+    }, normalized);
+    setLastSyncInfo('online', 'Guardado en Supabase');
+    return { ok: true, mode: 'supabase' };
+  } catch (error) {
+    console.error('No se pudo guardar en Supabase', error);
+    setLastSyncInfo('offline', String(error.message || error));
+    return { ok: false, mode: 'local', error };
   }
 };
 
@@ -221,7 +246,7 @@ window.resetCatalog = function(){
 };
 
 window.money = function(n){
-  return new Intl.NumberFormat('es-AR',{style:'currency',currency:'ARS',maximumFractionDigits:0}).format(Number(n || 0));
+  return new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(Number(n || 0));
 };
 
 window.fileToDataUrl = function(file){
@@ -231,4 +256,20 @@ window.fileToDataUrl = function(file){
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+};
+
+window.disableOldServiceWorkers = async function(){
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map(reg => reg.unregister()));
+  } catch (err) {
+    console.warn('No se pudieron limpiar service workers viejos', err);
+  }
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key.startsWith('dipsa')).map(key => caches.delete(key)));
+  } catch (err) {
+    console.warn('No se pudieron limpiar caches viejos', err);
+  }
 };
