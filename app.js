@@ -21,18 +21,17 @@
     birthdayActive: false,
     lookupTimer: null,
     carouselTimer: null,
-    carouselIndex: 0,
-    installPromptEvent: null
+    carouselIndex: 0
   };
 
   document.addEventListener('DOMContentLoaded', init);
 
   async function init(){
-    registerServiceWorker();
-    setupInstallPrompt();
     bindNavigation();
     bindCheckout();
     bindStaticActions();
+    registerServiceWorker();
+    setupInstallPrompt();
     await refreshStorefront();
     startPromoCarousel();
     syncForm();
@@ -43,57 +42,6 @@
     setInterval(function(){
       if (document.visibilityState === 'visible') refreshStorefront();
     }, 60000);
-  }
-
-
-
-  function registerServiceWorker(){
-    if (!('serviceWorker' in navigator)) return;
-    window.addEventListener('load', function(){
-      navigator.serviceWorker.register('./service-worker.js').catch(function(error){
-        console.warn('No se pudo registrar el service worker:', error && error.message ? error.message : error);
-      });
-    });
-  }
-
-  function setupInstallPrompt(){
-    var installBox = $('#installPrompt');
-    var installBtn = $('#installAppBtn');
-    var dismissBtn = $('#installDismissBtn');
-    if (!installBox || !installBtn || !dismissBtn) return;
-
-    if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return;
-    if (localStorage.getItem('dipsa-install-dismissed') === '1') return;
-
-    installBtn.addEventListener('click', async function(){
-      if (state.installPromptEvent) {
-        state.installPromptEvent.prompt();
-        try { await state.installPromptEvent.userChoice; } catch (error) {}
-        state.installPromptEvent = null;
-        installBox.classList.add('hidden-block');
-        return;
-      }
-      alert('Si tu navegador no muestra el aviso automático, abrí el menú del navegador y tocá "Instalar app" o "Agregar a pantalla de inicio".');
-    });
-
-    dismissBtn.addEventListener('click', function(){
-      localStorage.setItem('dipsa-install-dismissed', '1');
-      installBox.classList.add('hidden-block');
-    });
-
-    window.addEventListener('beforeinstallprompt', function(event){
-      event.preventDefault();
-      state.installPromptEvent = event;
-      installBox.classList.remove('hidden-block');
-    });
-
-    window.addEventListener('appinstalled', function(){
-      localStorage.setItem('dipsa-install-dismissed', '1');
-      installBox.classList.add('hidden-block');
-    });
-
-    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
-    if (isIOS) installBox.classList.remove('hidden-block');
   }
 
   async function refreshStorefront(){
@@ -124,9 +72,63 @@
     $('#deliveryToggle').addEventListener('click', function(){ state.delivery = true; updateDeliveryToggle(); renderCart(); });
     $('#pickupToggle').addEventListener('click', function(){ state.delivery = false; updateDeliveryToggle(); renderCart(); });
     $('#sendWhatsApp').addEventListener('click', submitOrder);
-    $('#heroMenuBtn').addEventListener('click', function(){ state.menuFilter = 'all'; switchScreen('menu'); });
-    $('#heroWhatsAppBtn').addEventListener('click', function(){ openBusinessWhatsApp(); });
-    $('#deliveryBadgeBtn').addEventListener('click', function(){ openBusinessWhatsApp(); });
+    const installBtn = $('#installBtn');
+    const dismissInstall = $('#dismissInstall');
+    if (installBtn) installBtn.addEventListener('click', promptInstall);
+    if (dismissInstall) dismissInstall.addEventListener('click', dismissInstallBanner);
+  }
+
+
+
+  function registerServiceWorker(){
+    if (!('serviceWorker' in navigator)) return;
+    if (location.protocol === 'file:') return;
+    navigator.serviceWorker.register('./service-worker.js').catch(function(error){
+      console.warn('No se pudo registrar el service worker:', error.message);
+    });
+  }
+
+  function setupInstallPrompt(){
+    window.addEventListener('beforeinstallprompt', function(event){
+      event.preventDefault();
+      state.installPrompt = event;
+      showInstallBanner();
+    });
+
+    window.addEventListener('appinstalled', function(){
+      state.installPrompt = null;
+      hideInstallBanner(true);
+    });
+  }
+
+  function showInstallBanner(){
+    const banner = $('#installBanner');
+    if (!banner) return;
+    if (window.localStorage.getItem('dipsa_install_banner_closed') === '1') return;
+    banner.classList.remove('hidden');
+  }
+
+  function hideInstallBanner(persist){
+    const banner = $('#installBanner');
+    if (!banner) return;
+    banner.classList.add('hidden');
+    if (persist) window.localStorage.setItem('dipsa_install_banner_closed', '1');
+  }
+
+  function dismissInstallBanner(){
+    hideInstallBanner(true);
+  }
+
+  async function promptInstall(){
+    if (!state.installPrompt) return;
+    state.installPrompt.prompt();
+    try {
+      await state.installPrompt.userChoice;
+    } catch (error) {
+      console.warn('No se pudo completar la instalación:', error.message);
+    }
+    state.installPrompt = null;
+    hideInstallBanner(true);
   }
 
   function bindCheckout(){
@@ -221,9 +223,11 @@
     $('#brandTagline').textContent = state.store.business.tagline || '';
     $('#heroImage').src = state.store.business.heroImage || 'assets/hero.jpg';
     $('#heroTitle').textContent = 'Pedí fácil desde tu celu';
-    $('#heroSubtitle').textContent = 'Menú claro, precios en vivo y cierre por WhatsApp.';
-    $('#deliveryText').textContent = state.store.business.deliveryMessage || 'Delivery y pedidos por WhatsApp';
+    $('#heroSubtitle').textContent = '';
+    $('#deliveryText').textContent = 'Delivery y pedidos por WhatsApp';
     $('#deliveryPhone').textContent = state.store.business.phoneDisplay || state.store.business.whatsapp || '';
+    const heroEyebrow = document.querySelector('.hero-copy .eyebrow');
+    if (heroEyebrow) heroEyebrow.textContent = 'DIPSA HELVECIA';
     $('#storeStatus').textContent = state.store.business.storeOpen === false ? 'Cerrado' : 'Abierto ahora';
     $('#promoHeadline').textContent = state.store.business.promoHeadline || 'Promos destacadas';
   }
@@ -405,7 +409,11 @@
     addButton.className = 'add-btn';
     addButton.textContent = 'Agregar';
     addButton.addEventListener('click', function(){
-      if (item.category === 'Panchos') return openPanchoDialog(item);
+      if (item.category === 'Panchos') {
+        const panchoName = String(item.name || '').toLowerCase().trim();
+        if (panchoName === 'pancho simple' || panchoName === 'pancho pizza') return openPanchoDialog(item);
+        return addToCart({ id:item.id, name:item.name, price:item.price, note:'' });
+      }
       if (item.category === 'Empanadas') return openEmpanadaDialog(item);
       addToCart({ id:item.id, name:item.name, price:item.price, note:'' });
     });
@@ -559,11 +567,8 @@
   function refreshBirthdayState(){
     state.birthdayActive = window.DIPSA.isBirthdayToday(state.customer.birthdate);
     updateBirthdateFieldState();
-    $('#birthdayHelp').textContent = state.birthdayActive
-      ? 'Hoy se aplica tu descuento de cumpleaños. Vuelve a activarse recién el año que viene.'
-      : (state.customer.birthdate
-          ? 'Tu fecha ya quedó registrada. El descuento se vuelve a activar solo una vez por año, en tu día.'
-          : 'Tu fecha de nacimiento se guarda una sola vez.');
+    const birthdayHelp = $('#birthdayHelp');
+    if (birthdayHelp) birthdayHelp.style.display = 'none';
   }
 
   async function submitOrder(){

@@ -10,6 +10,17 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="installBanner" class="install-banner hidden" role="region" aria-label="Instalar app">
+    <div>
+      <strong>Instalá la app de Dipsa</strong>
+      <span>Acceso rápido desde tu celu.</span>
+    </div>
+    <div class="install-actions">
+      <button id="installBtn" class="small-btn" type="button">Instalar app</button>
+      <button id="dismissInstall" class="small-btn ghost" type="button">Cerrar</button>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <img id="brandLogo" src="assets/logo.jpg" alt="Logo Dipsa" class="logo">
@@ -21,32 +32,15 @@
     <div id="storeStatus" class="status-pill">Cargando...</div>
   </header>
 
-
-
-  <div id="installPrompt" class="install-prompt hidden-block">
-    <div class="install-copy">
-      <strong>Instalar app</strong>
-      <span>Agregá Dipsa a tu pantalla de inicio para abrirla como app.</span>
-    </div>
-    <div class="install-actions">
-      <button id="installAppBtn" class="btn primary small" type="button">Instalar</button>
-      <button id="installDismissBtn" class="btn ghost small" type="button">Ahora no</button>
-    </div>
-  </div>
-
   <main class="app">
     <section id="home" class="screen active">
       <div class="hero">
         <img id="heroImage" src="assets/hero.jpg" alt="Dipsa">
         <div class="hero-overlay"></div>
         <div class="hero-copy">
-          <span class="eyebrow">Pedidos Dipsa</span>
+          <span class="eyebrow">DIPSA HELVECIA</span>
           <h2 id="heroTitle">Pedí fácil desde tu celu</h2>
-          <p id="heroSubtitle">Menú claro, carrito directo y cierre por WhatsApp.</p>
-          <div class="hero-actions">
-            <button id="heroMenuBtn" class="btn primary" type="button">Ver menú</button>
-            <button id="heroWhatsAppBtn" class="btn secondary" type="button">WhatsApp</button>
-          </div>
+          <p id="heroSubtitle"></p>
         </div>
       </div>
 
@@ -56,7 +50,6 @@
           <strong id="deliveryText">Delivery y pedidos por WhatsApp</strong>
           <p id="deliveryPhone">+54 9 3405 49-0506</p>
         </div>
-        <button id="deliveryBadgeBtn" class="wa-inline" type="button">Pedir ahora</button>
       </div>
 
       <div id="birthdayBannerWrap"></div>
@@ -135,7 +128,6 @@
           <button id="deliveryToggle" class="chip active" type="button">Delivery</button>
           <button id="pickupToggle" class="chip" type="button">Retiro</button>
         </div>
-        <div id="birthdayHelp" class="small-note" style="margin-top:10px">Cargá tu fecha de nacimiento una sola vez para activar el descuento el día que toque.</div>
         <button id="sendWhatsApp" class="wa-btn" type="button">Enviar pedido por WhatsApp</button>
       </div>
     </section>
