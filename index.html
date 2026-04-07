@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#5a1ea3">
+  <title>Dipsa</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/logo.jpg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img id="brandLogo" src="assets/logo.jpg" alt="Logo Dipsa" class="logo">
+      <div>
+        <h1 id="brandName">DIPSA</h1>
+        <p id="brandTagline">Pizzas, birras y combos al toque</p>
+      </div>
+    </div>
+    <div id="storeStatus" class="status-pill">Cargando...</div>
+  </header>
+
+
+
+  <div id="installPrompt" class="install-prompt hidden-block">
+    <div class="install-copy">
+      <strong>Instalar app</strong>
+      <span>Agregá Dipsa a tu pantalla de inicio para abrirla como app.</span>
+    </div>
+    <div class="install-actions">
+      <button id="installAppBtn" class="btn primary small" type="button">Instalar</button>
+      <button id="installDismissBtn" class="btn ghost small" type="button">Ahora no</button>
+    </div>
+  </div>
+
+  <main class="app">
+    <section id="home" class="screen active">
+      <div class="hero">
+        <img id="heroImage" src="assets/hero.jpg" alt="Dipsa">
+        <div class="hero-overlay"></div>
+        <div class="hero-copy">
+          <span class="eyebrow">Pedidos Dipsa</span>
+          <h2 id="heroTitle">Pedí fácil desde tu celu</h2>
+          <p id="heroSubtitle">Menú claro, carrito directo y cierre por WhatsApp.</p>
+          <div class="hero-actions">
+            <button id="heroMenuBtn" class="btn primary" type="button">Ver menú</button>
+            <button id="heroWhatsAppBtn" class="btn secondary" type="button">WhatsApp</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="delivery-banner">
+        <div>
+          <span class="eyebrow gold">Delivery</span>
+          <strong id="deliveryText">Delivery y pedidos por WhatsApp</strong>
+          <p id="deliveryPhone">+54 9 3405 49-0506</p>
+        </div>
+        <button id="deliveryBadgeBtn" class="wa-inline" type="button">Pedir ahora</button>
+      </div>
+
+      <div id="birthdayBannerWrap"></div>
+
+      <div class="block">
+        <div class="block-head">
+          <h3 id="promoHeadline">Promos destacadas</h3>
+        </div>
+        <div id="dailyPromos" class="horizontal-cards"></div>
+      </div>
+
+      <div class="block">
+        <h3>Categorías</h3>
+        <div id="categoryGrid" class="category-grid"></div>
+      </div>
+    </section>
+
+    <section id="promos" class="screen">
+      <div class="chips">
+        <button id="promoChipDaily" class="chip active" type="button">Hoy</button>
+        <button id="promoChipGeneral" class="chip" type="button">Generales</button>
+      </div>
+      <div id="promoDailyBlock" class="block">
+        <h3>Promos del día</h3>
+        <div id="promoDailyList" class="stack"></div>
+      </div>
+      <div id="promoGeneralBlock" class="block hidden-block">
+        <h3>Promos generales</h3>
+        <div id="promoGeneralList" class="stack"></div>
+      </div>
+    </section>
+
+    <section id="menu" class="screen">
+      <div class="searchbar">Elegí una categoría o agregá directo al carrito.</div>
+      <div id="menuFilterChips" class="chips menu-chips"></div>
+      <div id="menuSections" class="stack menu-stack"></div>
+    </section>
+
+    <section id="cart" class="screen">
+      <div class="card white">
+        <h3>Tu pedido</h3>
+        <div id="cartItems" class="stack mini"></div>
+        <div class="summary">
+          <div class="row"><span>Subtotal</span><strong id="subtotal">$0</strong></div>
+          <div class="row"><span>Delivery</span><strong id="deliveryCost">$0</strong></div>
+          <div class="row success"><span>Cumpleaños</span><strong id="birthdayDiscount">$0</strong></div>
+          <div class="row total"><span>Total final</span><strong id="total">$0</strong></div>
+        </div>
+      </div>
+
+      <div class="card white">
+        <h3>Checkout</h3>
+        <div class="checkout-form">
+          <label class="field-label">Nombre y apellido<input id="customerName" class="field-input" type="text" autocomplete="name" placeholder="Ej: Ariana Gómez"></label>
+          <label class="field-label">Teléfono<input id="customerPhone" class="field-input" type="tel" autocomplete="tel" placeholder="Ej: 3405..."></label>
+          <label class="field-label delivery-only">Dirección<input id="customerAddress" class="field-input" type="text" autocomplete="street-address" placeholder="Calle y número"></label>
+          <label class="field-label">Zona
+            <select id="customerZone" class="field-input">
+              <option value="">Seleccionar zona</option>
+              <option>Helvecia</option>
+              <option>Campo del Medio</option>
+              <option>Otra</option>
+            </select>
+          </label>
+          <label class="field-label">Pago
+            <select id="customerPayment" class="field-input">
+              <option value="">Seleccionar método</option>
+              <option>Efectivo</option>
+              <option>Transferencia</option>
+            </select>
+          </label>
+          <label class="field-label">Fecha de nacimiento<input id="customerBirthdate" class="field-input" type="date"></label>
+          <label class="field-label">Observaciones<textarea id="customerNotes" class="field-input field-textarea" rows="3" placeholder="Aclaraciones para el pedido"></textarea></label>
+        </div>
+        <div class="chips">
+          <button id="deliveryToggle" class="chip active" type="button">Delivery</button>
+          <button id="pickupToggle" class="chip" type="button">Retiro</button>
+        </div>
+        <div id="birthdayHelp" class="small-note" style="margin-top:10px">Cargá tu fecha de nacimiento una sola vez para activar el descuento el día que toque.</div>
+        <button id="sendWhatsApp" class="wa-btn" type="button">Enviar pedido por WhatsApp</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button data-screen="home" class="nav-btn active" type="button">Inicio</button>
+    <button data-screen="promos" class="nav-btn" type="button">Promos</button>
+    <button data-screen="menu" class="nav-btn" type="button">Menú</button>
+    <button data-screen="cart" class="nav-btn" type="button">Carrito</button>
+  </nav>
+
+  <script src="config.js"></script>
+  <script src="shared.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
