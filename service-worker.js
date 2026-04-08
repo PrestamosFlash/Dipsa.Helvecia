@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dipsa-live-v7-home-layout';
+const CACHE_NAME = 'dipsa-live-v10-menu-thumb-fix';
 const ASSETS = [
   './',
   './index.html',
