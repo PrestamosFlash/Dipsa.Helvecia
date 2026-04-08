@@ -72,6 +72,8 @@
     $('#deliveryToggle').addEventListener('click', function(){ state.delivery = true; updateDeliveryToggle(); renderCart(); });
     $('#pickupToggle').addEventListener('click', function(){ state.delivery = false; updateDeliveryToggle(); renderCart(); });
     $('#sendWhatsApp').addEventListener('click', submitOrder);
+    const deliveryBadgeBtn = $('#deliveryBadgeBtn');
+    if (deliveryBadgeBtn) deliveryBadgeBtn.addEventListener('click', openBusinessWhatsApp);
     const installBtn = $('#installBtn');
     const dismissInstall = $('#dismissInstall');
     if (installBtn) installBtn.addEventListener('click', promptInstall);
@@ -377,7 +379,9 @@
   function createProductCard(item){
     const article = document.createElement('article');
     article.className = 'product-card' + (item.in_stock === false ? ' is-out' : '');
+    const productImage = item.image_url || window.DIPSA.getCategoryImage(item.category) || '';
     article.innerHTML = [
+      productImage ? '<div class="product-media"><img src="' + escapeAttribute(productImage) + '" alt="' + escapeAttribute(item.name) + '"></div>' : '',
       '<div class="product-head"><div><div class="product-name">' + escapeHtml(item.name) + '</div>' + (item.detail ? '<div class="product-detail">' + escapeHtml(item.detail) + '</div>' : '') + '</div><span class="stock-badge ' + (item.in_stock === false ? 'out' : '') + '">' + (item.in_stock === false ? 'Sin stock' : 'Disponible') + '</span></div>',
       '<div class="product-actions"><div><div class="product-price">' + window.DIPSA.money(item.price) + '</div>' + (item.allow_half ? '<div class="product-subprice">Media pizza: ' + window.DIPSA.money(Math.round(item.price / 2)) + '</div>' : '') + '</div><div class="product-buttons"></div></div>'
     ].join('');
