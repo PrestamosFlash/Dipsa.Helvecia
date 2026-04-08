@@ -1,4 +1,4 @@
-const CACHE_NAME = 'dipsa-live-v10-menu-thumb-fix';
+const CACHE_NAME = 'dipsa-live-v12-logo-bigger-title-smaller';
 const ASSETS = [
   './',
   './index.html',
