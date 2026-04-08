@@ -221,7 +221,7 @@
   function renderBrand(){
     if (!state.store) return;
     $('#brandLogo').src = state.store.business.logo || 'assets/logo.jpg';
-    $('#brandName').textContent = (state.store.business.name || 'Dipsa').toUpperCase();
+    $('#brandName').textContent = 'SABOR CASERO';
     $('#brandTagline').textContent = state.store.business.tagline || '';
     $('#heroImage').src = state.store.business.heroImage || 'assets/hero.jpg';
     $('#heroTitle').textContent = 'Pedí fácil desde tu celu';
